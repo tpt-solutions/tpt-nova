@@ -1,0 +1,11 @@
+[package]
+name = "nova-audio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "2D audio for TPT Nova: SFX one-shots, looping music, and bus-based volume mixing"
+
+[dependencies]
+rodio = "0.22"
+log = "0.4"

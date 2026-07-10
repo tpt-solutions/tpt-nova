@@ -1,0 +1,12 @@
+[package]
+name = "nova-scripting"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Hot-reloadable Rust gameplay modules for TPT Nova: stable C-ABI boundary + dylib reload watcher"
+
+[dependencies]
+nova-ecs = { workspace = true }
+libloading = "0.8"
+log = "0.4"

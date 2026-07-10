@@ -1,0 +1,33 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/nova-ecs",
+    "crates/nova-telemetry",
+    "crates/nova-render",
+    "crates/nova-input",
+    "crates/nova-physics",
+    "crates/nova-scene",
+    "crates/nova-audio",
+    "crates/nova-scripting",
+    "crates/nova-gameplay-example",
+    "crates/nova-ui",
+    "crates/nova-editor",
+    "crates/nova-app",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/tpt-nova/tpt-nova"
+
+[workspace.dependencies]
+nova-ecs = { path = "crates/nova-ecs" }
+nova-telemetry = { path = "crates/nova-telemetry" }
+nova-render = { path = "crates/nova-render" }
+nova-physics = { path = "crates/nova-physics" }
+nova-scene = { path = "crates/nova-scene" }
+nova-input = { path = "crates/nova-input" }
+nova-audio = { path = "crates/nova-audio" }
+nova-ui = { path = "crates/nova-ui" }
+nova-scripting = { path = "crates/nova-scripting" }

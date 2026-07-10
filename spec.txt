@@ -1,0 +1,83 @@
+TPT Nova: Technical Design & Vision Document
+Version: 2.0 (Generative Integration Update)
+Status: Conceptual / Pre-Production
+Branding: TPT Nova
+Executive Summary
+TPT Nova is a next-generation, AI-native Real-Time Narrative and Generative Engine. Unlike traditional game engines (Godot, Unity, Unreal) which are designed as manual "construction kits," TPT Nova is designed as a "Director’s Chair" and "Structural Anchor."
+As generative AI (Video LLMs, Image-to-3D tools like Meshy) becomes capable of generating stunning visual media, a critical bottleneck has emerged: these tools generate pixels and "dumb" geometry, not interactive, physics-driven objects. TPT Nova bridges this gap. It provides the deterministic runtime, the ECS architecture, and the "Vibe GUI" required to force AI-generated illusions into interactive, game-ready, and cinema-ready realities.
+1. The Purpose
+The purpose of TPT Nova is to shift the paradigm of interactive media creation from manual construction to AI direction and structural anchoring.
+We are entering an era where AI can generate the illusion of reality (pixels, textures, static meshes), but humans need the math of reality (collision, physics, state, logic) to create interactive experiences. TPT Nova exists to be the bridge between generative AI outputs and interactive runtimes.
+Core Philosophies:
+Human Taste, Machine Execution: The human defines the "feel" and intent. The AI executes the code, generates the assets, and runs the simulation.
+The Structural Anchor: Generative AI provides the visual surface; TPT Nova provides the interactive skeleton. We turn "dumb" AI meshes into "smart" interactive objects.
+Data Over Objects: A strict Entity-Component-System (ECS) architecture that is flat, explicit, and perfectly sized for AI context windows.
+Deterministic & Observable: 100% deterministic physics and logic loops with structured JSON telemetry, allowing AI agents to self-debug and iterate without human intervention.
+2. What It Is Trying to Solve (The Problem Statement)
+Current engines and AI workflows suffer from four critical bottlenecks that TPT Nova is designed to eliminate:
+Problem A: The "Context Window" Architecture Trap
+Traditional engines rely on massive, deeply nested C++ classes. AI agents cannot easily see how a change in one script ripples through the engine.
+The Nova Solution: A strict ECS architecture. Data is flat and isolated. AI can modify a GravityComponent without needing to parse a million lines of legacy code.
+Problem B: The "Prompt Hell" Feedback Loop
+When AI-generated code fails in traditional engines, developers get plain-text console errors, leading to a slow, manual loop of prompting, recompiling (often 40+ minutes), and testing.
+The Nova Solution: Structured JSON Telemetry. The engine emits machine-readable payloads (Entity ID, component state, deterministic seed). The AI reads the JSON, fixes the code, and re-injects it instantly.
+Problem C: The "Taste" Gap in AI Generation
+AI can generate a mathematically perfect jump arc, but it doesn't know if it "feels snappy." Humans cannot easily communicate "feel" via text prompts.
+The Nova Solution: The "Vibe GUI." Humans interact with visual parameter spaces (e.g., dragging a bezier curve). The engine translates this visual input into mathematical constraints, and the AI instantly rewrites the underlying logic to match.
+Problem D: The "Dumb Asset" & "Pixel Illusion" Gap (NEW)
+Video LLMs dream in pixels (lacking object permanence). Image-to-3D tools (Meshy, Tripo) generate beautiful but "dumb" static meshes with no physics, rigging, or logic. You cannot interact with them.
+The Nova Solution: The Generative Ingestion Pipeline. TPT Nova automatically wraps AI-generated pixels and meshes in interactive logic—auto-generating colliders, auto-rigging skeletons, and overlaying physics proxies on Gaussian Splats.
+3. The Tech Stack
+TPT Nova utilizes a modern, high-performance stack optimized for both AI comprehension and generative media ingestion.
+Core Runtime & Architecture
+Language: Rust. Chosen for memory safety, zero-cost abstractions, and blazing-fast compile times.
+Architecture: Data-Oriented / ECS. Utilizing a highly optimized Rust ECS. Ensures data is contiguous in memory, maximizing CPU cache hits and making state trivially easy for AI to serialize.
+Determinism: A strictly locked-step, deterministic physics and logic loop for flawless AI self-debugging.
+Rendering & Graphics
+API: wgpu. A safe, portable, modern graphics API based on WebGPU. Targets Vulkan, DirectX 12, Metal, and WebGPU natively.
+Pipeline: A modular, forward+ rendering pipeline optimized for real-time cinematic lighting and neural material integration.
+Generative Media & Asset Bridge (NEW)
+Video-to-ECS Pipeline: Ingests multi-layered data (Depth Maps, Segmentation Masks, Motion Vectors) from Video LLMs to automatically generate interactive 3D entities and colliders.
+Smart Mesh Ingestion: Parses .glb/.obj files from tools like Meshy. Automatically runs VHACD (Voxel-based Convex Decomposition) to generate lightweight physics colliders, and integrates auto-rigging algorithms to instantly skeletonize character meshes.
+Gaussian Splat Wrapper: Renders photorealistic AI-generated 3D Gaussian Splats for visuals, but dynamically overlays invisible, low-poly "convex hull" colliders so the player can physically interact with them.
+Neural Materials System: An API layer that connects to live Video LLMs, allowing AI to generate dynamic, real-time video textures mapped directly onto 3D geometry (e.g., an AI-generated live commercial playing on an in-game billboard).
+The "Director's" Editor (GUI)
+Framework: Tauri (Rust backend + Web frontend) or a custom C++/ImGui hybrid.
+Design: The "Vibe GUI." Features visual parameter curves, high-level mood boards, and a "Highlight & Fix" viewport overlay. Designed for steering AI, not manual vertex editing.
+AI Integration & Telemetry
+Protocol: MessagePack / JSON. All internal engine events and state dumps are serialized into structured formats.
+RAG Integration: Built-in local vector database indexing project assets and docs, allowing integrated AI agents to query project-specific context without hallucinating.
+4. Cross-Media Application & Generative Workflows
+TPT Nova is a Real-Time Narrative Engine that unifies game development, virtual production, and generative AI.
+Workflow 1: The "Smart Object" Pipeline (Image-to-3D)
+The Prompt: The user asks an external tool (Meshy) to "Generate a cyberpunk vending machine."
+The Ingestion: The user drags the resulting .glb into TPT Nova.
+The Anchor: TPT Nova instantly analyzes the mesh. It generates a simplified physics collider, defines the screen area as a "Neural Material," and assigns mass/friction.
+The Vibe: The user plays the game, bumps into the machine, and uses the Vibe GUI to tweak a "Weight" curve, making it feel heavier. TPT Nova updates the Rust physics parameters instantly.
+Workflow 2: Interactive Cinema & Virtual Production
+The Environment: A Video LLM generates a photorealistic, dynamic background (e.g., a rainy neon city).
+The Anchor: TPT Nova ingests the video's depth map and segmentation mask, creating a 3D collision proxy for the buildings so the camera can fly through them without clipping.
+The Interaction: The foreground characters and props are rigid 3D objects managed by TPT Nova's ECS. The background is the Video LLM. The human director uses the GUI to adjust the "mood" of the lighting, which instantly alters both the 3D props and the Video LLM background simultaneously.
+5. Phased Execution Roadmap
+To avoid burnout, TPT Nova will be built in aggressive, playable phases, prioritizing the core loop before adding complex generative pipelines.
+Phase 1: The "Hello Triangle" & Telemetry (Months 1-2)
+Initialize Rust/wgpu. Open a window. Draw a 3D cube.
+Implement the JSON telemetry pipeline. Prove that an external AI agent can read the engine state and alter the cube via code injection.
+Phase 2: The 2D "Vibe" Sandbox (Months 3-5)
+Implement 2D physics (via Rapier) and basic sprite rendering.
+Build the "Vibe GUI" for 2D: visual curves for gravity, friction, and bounce.
+Phase 3: 3D Cinematic Core & Smart Ingestion (Months 6-9)
+Implement 3D PBR rendering, dynamic lighting, and virtual cameras.
+Build the Smart Mesh Ingestion pipeline: Prove that dropping a Meshy-generated .glb into TPT Nova automatically generates a physics collider and applies basic rigging.
+Phase 4: Generative Bridges & Neural Materials (Months 10-12)
+Implement the Gaussian Splat physics wrapper.
+Implement the Neural Materials system (mapping live AI video to 3D planes).
+Introduce the "Highlight and Fix" viewport tool.
+Phase 5: Ecosystem & Alpha (Months 13+)
+Open the API for external AI agents and Video LLMs.
+Release the RAG documentation parser.
+Launch public Alpha for "Vibe Coders" and indie filmmakers.
+Conclusion
+TPT Nova is not trying to be a better Godot. It is the foundational software for the post-LLM reality.
+Generative AI tools like Sora and Meshy are incredible at creating the illusion of reality, but they lack object permanence, physics, and logic. TPT Nova provides the math of reality. By acting as the Structural Anchor that forces AI-generated pixels and dumb meshes into interactive, deterministic, and physics-driven ECS objects, TPT Nova empowers a single creator to build interactive worlds and cinematic experiences that previously required a team of fifty.
+Direct the code. Anchor the illusion. Render the vision.

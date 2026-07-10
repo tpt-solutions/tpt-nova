@@ -1,0 +1,11 @@
+[package]
+name = "nova-ecs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Custom Entity-Component-System core for TPT Nova"
+
+[dependencies]
+glam = { version = "0.29", features = ["std", "serde"] }
+serde = { version = "1", features = ["derive"] }

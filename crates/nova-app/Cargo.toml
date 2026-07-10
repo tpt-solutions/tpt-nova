@@ -1,0 +1,25 @@
+[package]
+name = "nova-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TPT Nova runtime application shell (winit + wgpu + ECS)"
+
+[[bin]]
+name = "nova-app"
+path = "src/main.rs"
+
+[dependencies]
+nova-ecs = { workspace = true }
+nova-input = { path = "../nova-input" }
+nova-render = { path = "../nova-render" }
+nova-telemetry = { path = "../nova-telemetry" }
+
+winit = "0.30"
+glam = "0.29"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+log = "0.4"
+env_logger = "0.11"

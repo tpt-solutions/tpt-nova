@@ -1,0 +1,15 @@
+[package]
+name = "nova-scene"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Scene (de)serialization for TPT Nova: dump/restore the full ECS world to RON/JSON with versioned migrations"
+
+[dependencies]
+nova-ecs = { workspace = true }
+nova-physics = { workspace = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ron = "0.8"
+thiserror = "2"
