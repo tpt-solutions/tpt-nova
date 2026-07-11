@@ -1,0 +1,11 @@
+[package]
+name = "nova-anim"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Skeletal animation: skinning, keyframe sampling, pose blending, and a simple animation state machine for TPT Nova"
+
+[dependencies]
+nova-ecs = { workspace = true }
+glam = { version = "0.29", features = ["std"] }

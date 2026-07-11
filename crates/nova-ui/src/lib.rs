@@ -23,6 +23,13 @@
 
 use glam::Vec2;
 
+pub mod world;
+
+pub use world::{
+    draw_world_widgets, overlay_color, project_anchor, project_anchors, project_to_screen,
+    WorldAnchor, WorldWidget,
+};
+
 /// RGBA color, components in `[0, 1]`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Color {

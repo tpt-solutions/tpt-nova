@@ -1,0 +1,18 @@
+[package]
+name = "nova-ingest"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Smart mesh ingestion for TPT Nova: .glb/.obj loading, VHACD convex decomposition, procedural auto-rig, and Rapier3D collider generation"
+
+[dependencies]
+nova-ecs = { workspace = true }
+nova-anim = { workspace = true }
+glam = { version = "0.29", features = ["std", "serde"] }
+serde = { version = "1", features = ["derive"] }
+thiserror = "1"
+gltf = { version = "1", features = ["utils"] }
+tobj = "4"
+rapier3d = "0.34"
+parry3d = "0.29"

@@ -14,6 +14,7 @@
 //! - [`vibe`] — the Bézier "Vibe GUI" that drives a physics parameter live.
 
 pub mod gizmo;
+pub mod gizmo3d;
 pub mod hierarchy;
 pub mod inspector;
 pub mod vibe;
@@ -22,6 +23,7 @@ use nova_ecs::{Entity, World};
 use nova_ui::{Rect, Ui, UiInput};
 
 pub use gizmo::{apply_gizmo, GizmoMode, GizmoSnap};
+pub use gizmo3d::{apply_gizmo_3d, drag_plane_point, ray_plane, GizmoMode3D, Ray};
 pub use hierarchy::{build_hierarchy, HierarchyItem};
 pub use inspector::{inspect_entity, set_field, ComponentInspection, Field};
 pub use vibe::{BezierCurve, CurveEditor, GravityCurveBinding};

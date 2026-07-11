@@ -52,21 +52,21 @@
 
 ## Phase 3: 3D Cinematic Core & Smart Ingestion (Months 6-9)
 ### Rendering
-- [ ] Forward+ (or simple forward) 3D PBR rendering pipeline in nova-render
-- [ ] Dynamic lighting (at least one shadow-casting light type)
-- [ ] Virtual camera component/system
+- [x] Forward+ (or simple forward) 3D PBR rendering pipeline in nova-render
+- [x] Dynamic lighting (at least one shadow-casting light type)
+- [x] Virtual camera component/system
 ### Animation
-- [ ] nova-anim: skeletal animation playback (bone hierarchy, keyframe sampling)
-- [ ] Animation blending/state machine (idle/walk/run style transitions)
+- [x] nova-anim: skeletal animation playback (bone hierarchy, keyframe sampling)
+- [x] Animation blending/state machine (idle/walk/run style transitions)
 ### 3D Editor & UI
-- [ ] Scene editor: 3D viewport gizmos (move/rotate/scale in 3D, snapping)
-- [ ] nova-ui: world-space UI support (e.g. floating nameplates, in-world panels)
+- [x] Scene editor: 3D viewport gizmos (move/rotate/scale in 3D, snapping)
+- [x] nova-ui: world-space UI support (e.g. floating nameplates, in-world panels)
 ### Smart Mesh Ingestion
-- [ ] nova-ingest: .glb/.obj mesh loader
-- [ ] VHACD convex decomposition for auto-generated colliders
-- [ ] Auto-rigging pipeline (evaluate/integrate an existing algorithm or crate)
-- [ ] Rapier3D integration for ingested mesh colliders
-- [ ] Demo: drag a Meshy .glb in, get collider + rig automatically
+- [x] nova-ingest: .glb/.obj mesh loader
+- [x] VHACD convex decomposition for auto-generated colliders
+- [x] Auto-rigging pipeline (evaluate/integrate an existing algorithm or crate)
+- [x] Rapier3D integration for ingested mesh colliders
+- [x] Demo: drag a Meshy .glb in, get collider + rig automatically
 
 ## Phase 4: Generative Bridges, Neural Materials & Scripting Expansion (Months 10-12)
 ### Generative Pipelines

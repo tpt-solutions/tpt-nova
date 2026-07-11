@@ -12,6 +12,8 @@ members = [
     "crates/nova-gameplay-example",
     "crates/nova-ui",
     "crates/nova-editor",
+    "crates/nova-anim",
+    "crates/nova-ingest",
     "crates/nova-app",
 ]
 
@@ -31,3 +33,5 @@ nova-input = { path = "crates/nova-input" }
 nova-audio = { path = "crates/nova-audio" }
 nova-ui = { path = "crates/nova-ui" }
 nova-scripting = { path = "crates/nova-scripting" }
+nova-anim = { path = "crates/nova-anim" }
+nova-ingest = { path = "crates/nova-ingest" }

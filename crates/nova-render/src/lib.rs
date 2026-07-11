@@ -12,7 +12,9 @@ use nova_ecs::Mat4;
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 
+pub mod pbr;
 pub mod sprite;
+pub use pbr::PbrRenderer;
 pub use sprite::{
     batch_sprites, collect_world_sprites, AtlasRegion, Sprite, SpriteRenderer, SpriteVertex,
     TextureAtlas,
