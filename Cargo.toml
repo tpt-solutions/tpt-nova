@@ -15,6 +15,8 @@ members = [
     "crates/nova-anim",
     "crates/nova-ingest",
     "crates/nova-app",
+    "crates/nova-neural-materials",
+    "crates/nova-scripting-embedded",
 ]
 
 [workspace.package]
@@ -35,3 +37,5 @@ nova-ui = { path = "crates/nova-ui" }
 nova-scripting = { path = "crates/nova-scripting" }
 nova-anim = { path = "crates/nova-anim" }
 nova-ingest = { path = "crates/nova-ingest" }
+nova-neural-materials = { path = "crates/nova-neural-materials" }
+nova-scripting-embedded = { path = "crates/nova-scripting-embedded" }

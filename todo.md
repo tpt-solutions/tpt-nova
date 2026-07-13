@@ -72,15 +72,19 @@
 ### Generative Pipelines
 - [ ] Gaussian Splat renderer/loader integration
 - [ ] Low-poly convex hull collider overlay generation for splats
-- [ ] nova-neural-materials crate: API contract for live video-LLM texture feeds
-- [ ] Map a live/streamed video texture onto 3D geometry in real time
+- [x] nova-neural-materials crate: API contract for live video-LLM texture feeds
+- [x] Map a live/streamed video texture onto 3D geometry in real time
+      (NeuralTexture GPU upload + NeuralMaterialRegistry; PBR-material binding
+      into nova-render is a follow-up)
 - [ ] "Highlight & Fix" viewport overlay tool (select region -> AI fix prompt)
 - [ ] Video-to-ECS pipeline: depth map + segmentation mask ingestion for
       collision-proxy generation
 ### Scripting Expansion
-- [ ] Embedded scripting layer (Rhai or WASM) added alongside Rust hot-reload
-- [ ] Sandboxing/capability boundaries for AI-generated embedded scripts
-- [ ] Decide which gameplay surfaces target Rust-native vs embedded scripting
+- [x] Embedded scripting layer (Rhai) added alongside Rust hot-reload
+- [x] Sandboxing/capability boundaries for AI-generated embedded scripts
+- [x] Decide which gameplay surfaces target Rust-native vs embedded scripting
+      (RESOLVED: Rust hot-reload for shipped/perf-critical systems; Rhai for
+      AI-generated, sandboxed, hot-iterated logic — see Open Decisions)
 ### Audio Expansion
 - [ ] 3D spatial audio (positional sources, listener-relative attenuation)
 
@@ -106,5 +110,15 @@
 - [x] MessagePack adoption: **RESOLVED — adopt now as an optional encoding** alongside
       JSON. Telemetry frames stay JSON by default (human/AI readable) with an opt-in
       MessagePack sink for high-frequency/large payloads via `rmp-serde`.
-- [ ] Embedded scripting language choice (Rhai vs WASM-based) — decide before Phase 4 scripting expansion
+- [x] Embedded scripting language choice — **RESOLVED — Rhai** over WASM. Rationale:
+      Rhai is a tiny, pure-Rust, safe-by-default interpreter (no filesystem/network
+      surface, no `eval` unless explicitly enabled) that embeds with zero external
+      toolchain and compiles in milliseconds, making it ideal for the hot-iterated,
+      AI-generated logic the engine targets. Capability boundaries are enforced by
+      *registering only the functions a script is granted* (a denied capability's
+      function simply does not exist). WASM remains a possible future option for
+      fully untrusted, portable modules, but Rhai satisfies the Phase 4 sandboxing
+      requirement now. Split: Rust hot-reload (`nova-scripting`) for shipped /
+      performance-critical systems; Rhai (`nova-scripting-embedded`) for AI-generated
+      sandboxed logic.
 - [ ] Networking/multiplayer — not in spec or current scope; revisit if needed post-Alpha
