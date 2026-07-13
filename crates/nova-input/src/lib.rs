@@ -191,10 +191,8 @@ pub fn default_action_map() -> ActionMap {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use winit::event::{
-        ElementState, MouseButton, MouseScrollDelta, WindowEvent,
-    };
     use winit::dpi::PhysicalPosition;
+    use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
     use winit::keyboard::KeyCode;
 
     // ---- Keyboard event -> InputState mapping ----------------------------

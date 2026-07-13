@@ -215,10 +215,7 @@ mod tests {
         // Each widget contributes a rect + text, sorted farthest-first.
         assert_eq!(draw.len(), 4);
         match (&draw[1], &draw[3]) {
-            (
-                DrawCommand::Text { text: t0, .. },
-                DrawCommand::Text { text: t2, .. },
-            ) => {
+            (DrawCommand::Text { text: t0, .. }, DrawCommand::Text { text: t2, .. }) => {
                 assert_eq!(t0, "far");
                 assert_eq!(t2, "near");
             }

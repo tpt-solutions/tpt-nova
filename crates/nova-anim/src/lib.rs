@@ -676,7 +676,7 @@ mod tests {
         assert!(!g.transition_to("walk"));
 
         // A transition that is already in progress cannot be re-triggered.
-        assert!(g.transition_to("idle") == false);
+        assert!(!g.transition_to("idle"));
     }
 
     #[test]

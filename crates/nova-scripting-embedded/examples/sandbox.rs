@@ -7,12 +7,11 @@ use nova_scripting_embedded::{Capabilities, Capability, EmbeddedRuntime};
 
 fn main() {
     // An AI-generated script is only trusted with spawn + write + log + net.
-    let caps = Capabilities::none()
+    let caps = *Capabilities::none()
         .grant(Capability::Spawn)
         .grant(Capability::WriteWorld)
         .grant(Capability::Log)
-        .grant(Capability::Net)
-        .clone();
+        .grant(Capability::Net);
 
     let mut rt = EmbeddedRuntime::new(caps);
     let mut world = World::new();

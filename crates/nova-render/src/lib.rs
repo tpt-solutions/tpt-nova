@@ -497,7 +497,11 @@ mod tests {
         for face in 0..6 {
             let n0 = vertices[face * 4].normal;
             for k in 1..4 {
-                assert_eq!(vertices[face * 4 + k].normal, n0, "face {face} normal mismatch");
+                assert_eq!(
+                    vertices[face * 4 + k].normal,
+                    n0,
+                    "face {face} normal mismatch"
+                );
             }
         }
     }
@@ -524,7 +528,10 @@ mod tests {
         gt.0 = Mat4::from_translation(Vec3::new(0.0, 0.0, 5.0));
         let moved = compute_view_proj(&Camera::default(), &gt, 1.0);
 
-        assert!(!at_origin.abs_diff_eq(moved, 1e-5), "view should change with camera pose");
+        assert!(
+            !at_origin.abs_diff_eq(moved, 1e-5),
+            "view should change with camera pose"
+        );
 
         // The view matrix is the camera transform's inverse, so the world origin
         // lands at view-space z = -5 (directly in front of a camera at +5 on Z,

@@ -521,7 +521,9 @@ mod tests {
         // `eval` would be a direct sandbox escape; it must not exist on the engine.
         let mut rt = EmbeddedRuntime::new(Capabilities::all());
         let mut world = World::new();
-        let err = rt.run_and_apply("eval(\"spawn_entity()\");", &mut world).unwrap_err();
+        let err = rt
+            .run_and_apply("eval(\"spawn_entity()\");", &mut world)
+            .unwrap_err();
         assert!(
             format!("{err}").contains("eval"),
             "eval should be unavailable in the sandbox: {err}"

@@ -1604,6 +1604,7 @@ name = "nova-telemetry"
 version = "0.1.0"
 dependencies = [
  "nova-ecs",
+ "nova-physics",
  "rmp-serde",
  "serde",
  "serde_json",

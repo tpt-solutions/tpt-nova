@@ -150,7 +150,11 @@ mod tests {
         world.add_component(b, Parent(a));
 
         let items = build_hierarchy(&world);
-        assert_eq!(items.len(), 2, "both entities must appear exactly once (no infinite loop)");
+        assert_eq!(
+            items.len(),
+            2,
+            "both entities must appear exactly once (no infinite loop)"
+        );
     }
 
     #[test]

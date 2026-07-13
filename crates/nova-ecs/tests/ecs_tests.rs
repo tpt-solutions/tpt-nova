@@ -137,7 +137,12 @@ fn query_3_requires_all_three_components() {
     let all = world.spawn();
     world.add_component(all, Counter(1));
     world.add_component(all, Transform::default());
-    world.add_component(all, Mesh { kind: MeshKind::Cube });
+    world.add_component(
+        all,
+        Mesh {
+            kind: MeshKind::Cube,
+        },
+    );
 
     let found = world.query_3::<Counter, Transform, Mesh>();
     assert_eq!(found.len(), 1);
@@ -192,11 +197,18 @@ fn schedule_runs_stages_in_order() {
     let mut schedule = Schedule::new();
     schedule.add_stage("early");
     schedule.add_stage("late");
-    schedule.add_system_to("early", |w| w.resource_mut::<Vec<&str>>().unwrap().push("early"));
-    schedule.add_system_to("late", |w| w.resource_mut::<Vec<&str>>().unwrap().push("late"));
+    schedule.add_system_to("early", |w| {
+        w.resource_mut::<Vec<&str>>().unwrap().push("early")
+    });
+    schedule.add_system_to("late", |w| {
+        w.resource_mut::<Vec<&str>>().unwrap().push("late")
+    });
 
     schedule.run(&mut world);
-    assert_eq!(*world.resource::<Vec<&str>>().unwrap(), vec!["early", "late"]);
+    assert_eq!(
+        *world.resource::<Vec<&str>>().unwrap(),
+        vec!["early", "late"]
+    );
 }
 
 // ---- Scene graph ----------------------------------------------------------
@@ -249,7 +261,10 @@ fn reparenting_updates_world_transform() {
     world.add_component(root_a, Children(vec![child]));
 
     propagate_transforms(&mut world);
-    let first = world.get_component::<GlobalTransform>(child).unwrap().translation();
+    let first = world
+        .get_component::<GlobalTransform>(child)
+        .unwrap()
+        .translation();
     assert!((first - Vec3::new(1.0, 2.0, 0.0)).length() < 1e-5);
 
     // Reparent child under root_b.
@@ -259,15 +274,24 @@ fn reparenting_updates_world_transform() {
     world.add_component(root_b, Children(vec![child]));
 
     propagate_transforms(&mut world);
-    let second = world.get_component::<GlobalTransform>(child).unwrap().translation();
+    let second = world
+        .get_component::<GlobalTransform>(child)
+        .unwrap()
+        .translation();
     assert!((second - Vec3::new(0.0, 2.0, 5.0)).length() < 1e-5);
 }
 
 #[test]
 fn scene_graph_cycle_does_not_infinite_loop() {
     let mut world = World::new();
-    let a = spawn_with_transform(&mut world, Transform::from_translation(Vec3::new(1.0, 0.0, 0.0)));
-    let b = spawn_with_transform(&mut world, Transform::from_translation(Vec3::new(0.0, 1.0, 0.0)));
+    let a = spawn_with_transform(
+        &mut world,
+        Transform::from_translation(Vec3::new(1.0, 0.0, 0.0)),
+    );
+    let b = spawn_with_transform(
+        &mut world,
+        Transform::from_translation(Vec3::new(0.0, 1.0, 0.0)),
+    );
     // Mutual parent/child links form a cycle.
     world.add_component(a, Parent(b));
     world.add_component(a, Children(vec![b]));
@@ -300,7 +324,9 @@ fn component_serde_roundtrips() {
     let t2: Transform = from_str(&to_string(&t).unwrap()).unwrap();
     assert_eq!(t, t2);
 
-    let m = Mesh { kind: MeshKind::Cube };
+    let m = Mesh {
+        kind: MeshKind::Cube,
+    };
     let m2: Mesh = from_str(&to_string(&m).unwrap()).unwrap();
     assert_eq!(m, m2);
 

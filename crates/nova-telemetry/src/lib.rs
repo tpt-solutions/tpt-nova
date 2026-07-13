@@ -274,8 +274,7 @@ mod tests {
         let world = sample_world();
         let frame = dump_world(&world, 5, 123);
         let json = serde_json::to_string(&frame).expect("serialize json");
-        let back: TelemetryFrame =
-            serde_json::from_str(&json).expect("deserialize json");
+        let back: TelemetryFrame = serde_json::from_str(&json).expect("deserialize json");
         assert_eq!(back.schema_version, frame.schema_version);
         assert_eq!(back.tick, frame.tick);
         assert_eq!(back.seed, frame.seed);
@@ -287,7 +286,10 @@ mod tests {
             restored.components.get("Transform"),
             original.components.get("Transform")
         );
-        assert_eq!(restored.components.get("Mesh"), original.components.get("Mesh"));
+        assert_eq!(
+            restored.components.get("Mesh"),
+            original.components.get("Mesh")
+        );
     }
 
     #[test]

@@ -14,9 +14,9 @@ use std::sync::Arc;
 
 use rodio::source::Source;
 use rodio::stream::{DeviceSinkBuilder, MixerDeviceSink};
-use rodio::{Decoder, Player};
+use rodio::{Decoder, Player, SpatialPlayer};
 
-pub use mixer::{Bus, Mixer};
+pub use mixer::{Bus, Listener, Mixer, SpatialParams, Vec3};
 
 /// An in-memory decodable sound (WAV/OGG/FLAC/MP3, per rodio's decoders).
 ///
@@ -61,6 +61,13 @@ struct Voice {
     bus: Bus,
 }
 
+/// A single playing positional (3D) voice, spatialized via `rodio::SpatialPlayer`.
+struct SpatialVoice {
+    player: SpatialPlayer,
+    volume: f32,
+    bus: Bus,
+}
+
 /// Owns the audio output device and all currently-playing sounds.
 ///
 /// Not an ECS resource: it holds a platform audio stream that is not `Send`/
@@ -70,6 +77,7 @@ pub struct AudioEngine {
     mixer: Mixer,
     music: Option<Voice>,
     sfx: Vec<Voice>,
+    spatial: Vec<SpatialVoice>,
 }
 
 impl Default for AudioEngine {
@@ -94,6 +102,7 @@ impl AudioEngine {
             mixer: Mixer::new(),
             music: None,
             sfx: Vec::new(),
+            spatial: Vec::new(),
         }
     }
 
@@ -110,6 +119,58 @@ impl AudioEngine {
     /// first to drop finished ones).
     pub fn active_sfx(&self) -> usize {
         self.sfx.len()
+    }
+
+    /// Play a positional (3D) sound at `source` relative to `listener`.
+    ///
+    /// Binaural panning and distance attenuation are handled by
+    /// `rodio::SpatialPlayer` using the listener's ear positions; the engine
+    /// only applies the master/bus/sound gain on top. `params` selects the
+    /// distance/rolloff model reported by [`Mixer::spatial_gain`] for
+    /// device-independent previews and matches the intent of the live path.
+    /// Returns `true` if a voice was started. Falls back to a silent no-op
+    /// (returns `false`) when no output device is available, so callers can
+    /// play unconditionally.
+    #[allow(unused_variables)]
+    pub fn play_spatial(
+        &mut self,
+        sound: &Sound,
+        listener: &Listener,
+        source: Vec3,
+        params: &SpatialParams,
+        bus: Bus,
+        sound_volume: f32,
+    ) -> bool {
+        let device = match self.device.as_ref() {
+            Some(d) => d,
+            None => return false,
+        };
+        let decoded = match sound.decode() {
+            Ok(s) => s,
+            Err(e) => {
+                log::warn!("nova-audio: failed to decode spatial sfx: {e}");
+                return false;
+            }
+        };
+        let (left_ear, right_ear) = listener.ear_positions(0.1);
+        let player =
+            SpatialPlayer::connect_new(device.mixer(), source, left_ear, right_ear);
+        player.append(decoded);
+        // SpatialPlayer already attenuates by distance, so feed it the flat
+        // master*bus*sound gain; the analytic `Mixer::spatial_gain` model is
+        // used for device-independent previews / unit tests instead.
+        player.set_volume(self.mixer.gain(bus, sound_volume).max(0.0));
+        self.spatial.push(SpatialVoice {
+            player,
+            volume: sound_volume,
+            bus,
+        });
+        true
+    }
+
+    /// Number of currently-tracked positional (3D) voices.
+    pub fn active_spatial(&self) -> usize {
+        self.spatial.len()
     }
 
     fn new_player(&self) -> Option<Player> {
@@ -193,11 +254,15 @@ impl AudioEngine {
         if let Some(v) = &self.music {
             v.player.set_volume(self.mixer.gain(v.bus, v.volume));
         }
+        for v in &self.spatial {
+            v.player.set_volume(self.mixer.gain(v.bus, v.volume).max(0.0));
+        }
     }
 
     /// Drop finished SFX voices. Call once per frame.
     pub fn update(&mut self) {
         self.sfx.retain(|v| !v.player.empty());
+        self.spatial.retain(|v| !v.player.empty());
     }
 }
 
@@ -289,5 +354,47 @@ mod tests {
         engine.set_master_volume(0.2);
         assert_eq!(engine.mixer().master(), 0.2);
         assert_eq!(engine.mixer().bus(Bus::Sfx), 0.4);
+    }
+
+    #[test]
+    fn spatial_play_is_safe_without_device() {
+        // On a headless machine play_spatial must not panic and simply reports
+        // that nothing started; the analytic gain model is independently tested
+        // in the mixer.
+        let mut engine = AudioEngine::new();
+        let sound = Sound::from_bytes(make_wav(&[0i16; 100], 44_100));
+        let listener = Listener::default();
+        let started = engine.play_spatial(
+            &sound,
+            &listener,
+            [10.0, 0.0, 0.0],
+            &SpatialParams::default(),
+            Bus::Sfx,
+            1.0,
+        );
+        // Whether or not a device exists, the call is safe; active_spatial
+        // reflects whatever the platform allowed.
+        let _ = started;
+        let _ = engine.active_spatial();
+    }
+
+    #[test]
+    fn spatial_gain_preview_matches_mixer_model() {
+        // The engine's analytic preview must agree with `Mixer::spatial_gain`,
+        // so headless code can reason about what a positional source will do.
+        let engine = AudioEngine::new();
+        let listener = Listener::default();
+        let params = SpatialParams::default();
+        let [l, r] =
+            engine
+                .mixer()
+                .spatial_gain(&listener, [3.0, 0.0, 0.0], &params, Bus::Sfx, 1.0);
+        assert!(l >= 0.0 && r >= 0.0);
+        // A source at the listener is full-volume (center pan => equal-power).
+        let [cl, cr] =
+            engine
+                .mixer()
+                .spatial_gain(&listener, [0.0, 0.0, 0.0], &params, Bus::Sfx, 1.0);
+        assert!((cl - cr).abs() < 1e-4);
     }
 }

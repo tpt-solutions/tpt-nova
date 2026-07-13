@@ -58,3 +58,57 @@ jobs:
 
       - name: Test
         run: cargo test --workspace
+
+  coverage:
+    name: coverage (tarpaulin)
+    runs-on: ubuntu-latest
+    # Coverage tooling is informational; don't fail the whole pipeline if the
+    # Linux-only coverage run has issues (e.g. a flaky cargo-install).
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libx11-dev libxrandr-dev libxi-dev libxcursor-dev \
+            libxkbcommon-dev libwayland-dev libudev-dev \
+            libasound2-dev pkg-config
+
+      - name: Install cargo-tarpaulin
+        run: cargo install cargo-tarpaulin --version "^0.31"
+
+      # Establish a coverage baseline by generating an lcov report. The count of
+      # covered lines is printed so regressions are visible in the job log; the
+      # report is uploaded as an artifact for downstream tooling.
+      - name: Run tarpaulin
+        run: |
+          cargo tarpaulin --workspace --out Lcov --output-dir coverage \
+            --exclude-files "*/tests/*" "*/benches/*" \
+            --timeout 300
+          echo "## Coverage baseline (tarpaulin)" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f coverage/lcov.info ]; then
+            echo "lcov report generated: $(wc -l < coverage/lcov.info) lines" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-lcov
+          path: coverage/lcov.info
+          if-no-files-found: warn

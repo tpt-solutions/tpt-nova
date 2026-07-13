@@ -6,6 +6,7 @@
 //! engine polls each tick. Telemetry is dumped to `nova-telemetry.json` on an
 //! interval so the agent can observe and self-correct.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -58,10 +59,14 @@ struct App {
     last_time: Instant,
     accumulator: f32,
     control_mtime: Option<u64>,
+    telemetry_path: PathBuf,
+    control_path: String,
 }
 
 impl App {
-    fn new(seed: u64) -> Self {
+    /// Build the app with explicit telemetry/control paths (used by tests to
+    /// keep the AI code-injection loop hermetic).
+    fn new_with_paths(seed: u64, telemetry_path: PathBuf, control_path: String) -> Self {
         let mut world = World::new();
 
         // Cube entity.
@@ -101,21 +106,28 @@ impl App {
             renderer: None,
             world,
             scheduler,
-            emitter: TelemetryEmitter::new(
-                FileSink::new(std::path::PathBuf::from("nova-telemetry.json")),
-                TELEMETRY_INTERVAL,
-            ),
+            emitter: TelemetryEmitter::new(FileSink::new(telemetry_path.clone()), TELEMETRY_INTERVAL),
             cube,
             camera,
             last_time: Instant::now(),
             accumulator: 0.0,
             control_mtime: None,
+            telemetry_path,
+            control_path,
         }
+    }
+
+    fn new(seed: u64) -> Self {
+        Self::new_with_paths(
+            seed,
+            PathBuf::from("nova-telemetry.json"),
+            CONTROL_PATH.to_string(),
+        )
     }
 
     fn step(&mut self) {
         // External control override (hot-apply without restart).
-        apply_control(&mut self.world, self.cube, &mut self.control_mtime);
+        apply_control(&mut self.world, self.cube, &mut self.control_mtime, &self.control_path);
 
         self.scheduler.run(&mut self.world);
 
@@ -209,8 +221,13 @@ fn movement_system(world: &mut World, cube: Entity) {
     }
 }
 
-fn apply_control(world: &mut World, cube: Entity, last_mtime: &mut Option<u64>) {
-    let meta = match std::fs::metadata(CONTROL_PATH) {
+fn apply_control(
+    world: &mut World,
+    cube: Entity,
+    last_mtime: &mut Option<u64>,
+    path: &str,
+) {
+    let meta = match std::fs::metadata(path) {
         Ok(m) => m,
         Err(_) => return,
     };
@@ -224,7 +241,7 @@ fn apply_control(world: &mut World, cube: Entity, last_mtime: &mut Option<u64>) 
     }
     *last_mtime = mtime;
 
-    let text = match std::fs::read_to_string(CONTROL_PATH) {
+    let text = match std::fs::read_to_string(path) {
         Ok(t) => t,
         Err(_) => return,
     };
@@ -434,5 +451,102 @@ mod tests {
             scheduler.run(&mut world);
         }
         assert_eq!(world.resource::<TickResource>().unwrap().tick, 5);
+    }
+
+    // ---- AI code-injection loop (regression harness) ----------------------
+
+    #[test]
+    fn ai_control_loop_hot_applies_rotation_and_is_idempotent() {
+        // End-to-end: an external agent writes `nova-control.json` -> the engine
+        // reads telemetry -> mutates the control file -> the engine hot-applies
+        // it next tick -> the world reflects the change (no restart).
+        let dir = std::env::temp_dir();
+        let control = dir.join("nova_control_loop_test.json");
+        let telemetry = dir.join("nova_telemetry_loop_test.json");
+        let _ = std::fs::remove_file(&control);
+        let _ = std::fs::remove_file(&telemetry);
+
+        let mut app = App::new_with_paths(
+            1,
+            telemetry.clone(),
+            control.to_string_lossy().to_string(),
+        );
+
+        // No control file yet -> cube stays at identity rotation.
+        app.step();
+        let before = app.world.get_component::<Transform>(app.cube).unwrap().rotation;
+        assert_eq!(before, Quat::IDENTITY);
+
+        // External agent writes a control file asking for a specific rotation.
+        let want = Quat::from_euler(EulerRot::XYZ, 0.3, 0.6, 0.9);
+        std::fs::write(
+            &control,
+            serde_json::json!({ "set_rotation": { "x": 0.3, "y": 0.6, "z": 0.9 } }).to_string(),
+        )
+        .unwrap();
+        // Give the filesystem a moment so the mtime definitely advances.
+        std::thread::sleep(Duration::from_millis(20));
+
+        app.step();
+        let applied = app.world.get_component::<Transform>(app.cube).unwrap().rotation;
+        assert!(
+            (applied - want).length() < 1e-4,
+            "rotation should be hot-applied: {applied:?} vs {want:?}"
+        );
+
+        // Stepping again without rewriting the control file must NOT re-apply
+        // (the loop is idempotent between writes), guarding against resets.
+        app.step();
+        let still = app.world.get_component::<Transform>(app.cube).unwrap().rotation;
+        assert!(
+            (still - want).length() < 1e-4,
+            "should remain stable when control is unchanged"
+        );
+
+        // A new control file with a different rotation replaces the old one.
+        let want2 = Quat::from_euler(EulerRot::XYZ, -0.5, 0.0, 0.0);
+        std::fs::write(
+            &control,
+            serde_json::json!({ "set_rotation": { "x": -0.5, "y": 0.0, "z": 0.0 } }).to_string(),
+        )
+        .unwrap();
+        std::thread::sleep(Duration::from_millis(20));
+        app.step();
+        let applied2 = app.world.get_component::<Transform>(app.cube).unwrap().rotation;
+        assert!(
+            (applied2 - want2).length() < 1e-4,
+            "rotation should re-hot-apply on a new write"
+        );
+
+        let _ = std::fs::remove_file(&control);
+        let _ = std::fs::remove_file(&telemetry);
+    }
+
+    #[test]
+    fn telemetry_loop_emits_world_state_across_ticks() {
+        // The engine must emit a parseable telemetry frame (what the AI agent
+        // reads) after enough deterministic ticks.
+        let dir = std::env::temp_dir();
+        let telemetry = dir.join("nova_telemetry_emit_test.json");
+        let control = dir.join("nova_control_emit_test.json");
+        let _ = std::fs::remove_file(&telemetry);
+
+        let mut app =
+            App::new_with_paths(7, telemetry.clone(), control.to_string_lossy().to_string());
+        // Run enough ticks to cross the telemetry emission interval (30 ticks).
+        for _ in 0..(TELEMETRY_INTERVAL + 1) {
+            app.step();
+        }
+        let text = std::fs::read_to_string(&telemetry).expect("telemetry file written");
+        let frame: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(frame["schema_version"], 1);
+        assert_eq!(frame["seed"], 7);
+        // The cube (and camera) must appear in the emitted entity dump.
+        let entities = frame["entities"].as_array().unwrap();
+        assert!(entities.len() >= 2, "expected cube + camera entities");
+        assert!(entities.iter().any(|e| e["components"].get("Mesh").is_some()));
+        assert!(entities.iter().any(|e| e["components"].get("Camera").is_some()));
+
+        let _ = std::fs::remove_file(&telemetry);
     }
 }

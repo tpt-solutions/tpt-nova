@@ -199,7 +199,11 @@ mod tests {
 
     #[test]
     fn dropped_stream_keeps_last_frame() {
-        let frames = vec![solid(2, 2, 1, 1, 1), solid(2, 2, 2, 2, 2), solid(2, 2, 3, 3, 3)];
+        let frames = vec![
+            solid(2, 2, 1, 1, 1),
+            solid(2, 2, 2, 2, 2),
+            solid(2, 2, 3, 3, 3),
+        ];
         let mut reg = NeuralMaterialRegistry::new(Box::new(DroppingProvider { frames }));
         let prompt =
             MaterialPrompt::new("d", "x", FeedSource::CaptureDevice(0)).with_resolution(2, 2);
@@ -208,7 +212,9 @@ mod tests {
         reg.update();
         reg.update();
         reg.update(); // source now exhausted
-        let last = reg.latest("d").expect("last frame retained after stream drops");
+        let last = reg
+            .latest("d")
+            .expect("last frame retained after stream drops");
         assert_eq!(last.rgba[0], 3);
 
         // Further polls must not panic and must keep the last frame available.

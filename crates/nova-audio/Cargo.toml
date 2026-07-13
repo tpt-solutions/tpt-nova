@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "2D audio for TPT Nova: SFX one-shots, looping music, and bus-based volume mixing"
+description = "2D and 3D audio for TPT Nova: SFX one-shots, looping music, bus-based volume mixing, and positional (spatial) sources"
 
 [dependencies]
 rodio = "0.22"

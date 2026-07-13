@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use nova_ecs::World;
-use nova_scripting::{ABI_VERSION, HotModule};
+use nova_scripting::{HotModule, ABI_VERSION};
 
 fn dylib_file_name(stem: &str) -> String {
     #[cfg(target_os = "windows")]
@@ -38,6 +38,22 @@ fn find_example_cdylib() -> Option<PathBuf> {
     let profile_dir = exe.parent()?.parent()?; // deps -> profile
     let candidate = profile_dir.join(dylib_file_name("nova_gameplay_example"));
     candidate.exists().then_some(candidate)
+}
+
+/// Copy the example cdylib to a test-owned temp file so we can simulate a
+/// recompile (rewrite) without ever touching the locked artifact in
+/// `target/`. `HotModule` loads a temp copy of *whatever* path it is given, so
+/// rewriting our own throwaway file is safe even where DLLs are locked (Windows).
+fn stage_temp_copy() -> Option<PathBuf> {
+    let original = find_example_cdylib()?;
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let ext = original.extension().and_then(|e| e.to_str()).unwrap_or("mod");
+    let work = std::env::temp_dir().join(format!("nova_reload_test_{nanos}.{ext}"));
+    std::fs::copy(&original, &work).ok()?;
+    Some(work)
 }
 
 #[test]
@@ -74,18 +90,28 @@ fn lifecycle_load_reload_unload() {
         }
     };
 
-    let mut module = HotModule::load(&path).expect("load example cdylib");
+    let work = match stage_temp_copy() {
+        Some(w) => w,
+        None => {
+            eprintln!("skipping: could not stage temp copy of example cdylib");
+            return;
+        }
+    };
+
+    let mut module = HotModule::load(&work).expect("load example cdylib");
 
     // on_load / update must not panic through the boundary.
     let mut world = World::new();
     module.on_load(&mut world);
     module.update(&mut world, 1.0, 0);
 
-    // Force a reload by touching the source file (HotModule copies to a temp
-    // file, so the original is never locked).
+    // Simulate a recompile by refreshing our own temp copy (HotModule copies it
+    // to a temp file on load, so the working copy is never locked and can be
+    // overwritten freely — including on Windows, where rewriting a loaded DLL
+    // directly is rejected by the OS).
     std::thread::sleep(Duration::from_millis(20));
-    let bytes = std::fs::read(&path).expect("read dylib");
-    std::fs::write(&path, &bytes).expect("rewrite dylib");
+    let original = find_example_cdylib().expect("example cdylib present");
+    std::fs::copy(&original, &work).expect("refresh working copy");
 
     let reloaded = module
         .reload_if_changed(&mut world)
@@ -94,4 +120,6 @@ fn lifecycle_load_reload_unload() {
 
     // Still drivable after the swap, and dropping unloads instance+library.
     module.update(&mut world, 1.0, 1);
+
+    let _ = std::fs::remove_file(&work);
 }
