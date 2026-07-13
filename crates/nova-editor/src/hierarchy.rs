@@ -111,4 +111,61 @@ mod tests {
         assert_eq!(items[2].depth, 2);
         assert!(!items[2].has_children);
     }
+
+    #[test]
+    fn reflects_relationship_changes() {
+        let mut world = World::new();
+        let root = world.spawn();
+        world.add_component(root, Transform::default());
+        let a = world.spawn();
+        world.add_component(a, Transform::default());
+        let b = world.spawn();
+        world.add_component(b, Transform::default());
+
+        // Initially both a and b are roots (depth 0).
+        let before = build_hierarchy(&world);
+        assert_eq!(before.len(), 3);
+        assert!(before.iter().all(|i| i.depth == 0));
+
+        // Reparent b under a after the fact; the hierarchy must update.
+        world.add_component(b, Parent(a));
+        world.add_component(a, Children(vec![b]));
+
+        let after = build_hierarchy(&world);
+        assert_eq!(after.len(), 3);
+        let b_item = after.iter().find(|i| i.entity == b).unwrap();
+        assert_eq!(b_item.depth, 1, "b should now be nested under a");
+    }
+
+    #[test]
+    fn cycle_does_not_loop_forever() {
+        // Make a and b each other's parent: neither is a root, both are orphans
+        // that must still be shown, and the visited guard must stop traversal.
+        let mut world = World::new();
+        let a = world.spawn();
+        let b = world.spawn();
+        world.add_component(a, Transform::default());
+        world.add_component(b, Transform::default());
+        world.add_component(a, Parent(b));
+        world.add_component(b, Parent(a));
+
+        let items = build_hierarchy(&world);
+        assert_eq!(items.len(), 2, "both entities must appear exactly once (no infinite loop)");
+    }
+
+    #[test]
+    fn orphan_with_dangling_parent_is_shown() {
+        let mut world = World::new();
+        let a = world.spawn();
+        let b = world.spawn();
+        world.add_component(a, Transform::default());
+        world.add_component(b, Transform::default());
+        // a is parented to b, then b is despawned, leaving a dangling parent.
+        world.add_component(a, Parent(b));
+        world.despawn(b);
+
+        let items = build_hierarchy(&world);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].entity, a);
+    }
 }

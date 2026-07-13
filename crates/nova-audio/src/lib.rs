@@ -263,4 +263,31 @@ mod tests {
         // Mixer math is always correct regardless of device availability.
         assert_eq!(engine.mixer().master(), 0.5);
     }
+
+    #[test]
+    fn stop_music_during_loop_is_safe() {
+        // Whether or not a device exists, starting a looping track and stopping
+        // it mid-loop must be safe and idempotent.
+        let mut engine = AudioEngine::new();
+        let sound = Sound::from_bytes(make_wav(&[0i16; 100], 44_100));
+        let started = engine.play_music(&sound, true);
+        engine.stop_music();
+        engine.stop_music();
+        // Stopping again must remain a no-op and not panic.
+        assert!(engine.mixer().bus(Bus::Music) >= 0.0);
+        let _ = started;
+    }
+
+    #[test]
+    fn bus_volume_changes_reapply_without_device() {
+        let mut engine = AudioEngine::new();
+        let sound = Sound::from_bytes(make_wav(&[0i16; 100], 44_100));
+        let _ = engine.play_sfx(&sound, 1.0);
+        // Changing bus volumes re-applies gains to live voices; must not panic
+        // whether or not a voice actually started.
+        engine.set_bus_volume(Bus::Sfx, 0.4);
+        engine.set_master_volume(0.2);
+        assert_eq!(engine.mixer().master(), 0.2);
+        assert_eq!(engine.mixer().bus(Bus::Sfx), 0.4);
+    }
 }

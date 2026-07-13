@@ -142,4 +142,77 @@ mod tests {
         assert_eq!((latest.width, latest.height), (4, 4));
         assert!(reg.latest_timestamp("b").unwrap() >= 1);
     }
+
+    #[test]
+    fn frame_overflow_is_safe() {
+        // Oversized dimensions must be rejected by the overflow-safe guard
+        // rather than panic or silently wrap.
+        let err = Frame::new(u32::MAX, u32::MAX, Vec::new(), 0).unwrap_err();
+        assert!(matches!(err, FrameError::SizeMismatch { .. }));
+    }
+
+    #[test]
+    fn set_provider_reopens_feeds() {
+        let mut reg = NeuralMaterialRegistry::default();
+        let prompt =
+            MaterialPrompt::new("m", "x", FeedSource::CaptureDevice(0)).with_resolution(4, 4);
+        reg.register(prompt).unwrap();
+        reg.update();
+        assert!(reg.latest("m").is_some());
+        // Swapping the provider re-opens the existing feed and keeps it live.
+        reg.set_provider(Box::new(MockProvider)).unwrap();
+        reg.update();
+        assert!(reg.latest("m").is_some());
+    }
+
+    /// A feed that yields a fixed list of frames then ends (simulates a dropped
+    /// / finished stream), to exercise the registry's dropped-stream handling.
+    struct DroppingSource {
+        frames: Vec<Frame>,
+        idx: usize,
+    }
+
+    impl crate::source::FrameSource for DroppingSource {
+        fn next_frame(&mut self) -> Option<Frame> {
+            if self.idx < self.frames.len() {
+                let f = self.frames[self.idx].clone();
+                self.idx += 1;
+                Some(f)
+            } else {
+                None
+            }
+        }
+    }
+
+    struct DroppingProvider {
+        frames: Vec<Frame>,
+    }
+
+    impl NeuralMaterialProvider for DroppingProvider {
+        fn open(&self, _prompt: &MaterialPrompt) -> Result<Box<dyn FrameSource>, ProviderError> {
+            Ok(Box::new(DroppingSource {
+                frames: self.frames.clone(),
+                idx: 0,
+            }))
+        }
+    }
+
+    #[test]
+    fn dropped_stream_keeps_last_frame() {
+        let frames = vec![solid(2, 2, 1, 1, 1), solid(2, 2, 2, 2, 2), solid(2, 2, 3, 3, 3)];
+        let mut reg = NeuralMaterialRegistry::new(Box::new(DroppingProvider { frames }));
+        let prompt =
+            MaterialPrompt::new("d", "x", FeedSource::CaptureDevice(0)).with_resolution(2, 2);
+        reg.register(prompt).unwrap();
+
+        reg.update();
+        reg.update();
+        reg.update(); // source now exhausted
+        let last = reg.latest("d").expect("last frame retained after stream drops");
+        assert_eq!(last.rgba[0], 3);
+
+        // Further polls must not panic and must keep the last frame available.
+        reg.update();
+        assert!(reg.latest("d").is_some());
+    }
 }

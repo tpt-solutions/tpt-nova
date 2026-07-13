@@ -160,10 +160,14 @@ impl std::error::Error for ScriptError {}
 
 impl From<Box<rhai::EvalAltResult>> for ScriptError {
     fn from(e: Box<rhai::EvalAltResult>) -> Self {
-        // Parse errors surface through the same path in Rhai; distinguish by
-        // inspecting the message is fragile, so we treat both as runtime
-        // failures here. Hosts only need to know "it didn't run".
-        ScriptError::Runtime(e.to_string())
+        // Parse/syntax errors are distinct from true runtime failures; surface
+        // them as `Compile` so hosts can tell "referenced an unregistered
+        // function / bad syntax" apart from an error during execution.
+        if matches!(*e, rhai::EvalAltResult::ErrorParsing(..)) {
+            ScriptError::Compile(e.to_string())
+        } else {
+            ScriptError::Runtime(e.to_string())
+        }
     }
 }
 
@@ -186,9 +190,20 @@ impl EmbeddedRuntime {
     /// Build a runtime that only exposes functions for the granted capabilities.
     pub fn new(caps: Capabilities) -> Self {
         let mut engine = Engine::new();
-        // No `eval`/`call_fn` surface by default in Rhai; we additionally keep
-        // the engine free of filesystem/network modules so scripts cannot reach
-        // the OS except through the host-registered commands below.
+        // Bound the interpreter so an untrusted / AI-authored script cannot hang
+        // or exhaust the host (the sandbox is a capability *and* resource
+        // boundary). Rhai has no filesystem/network modules registered here, so
+        // scripts can only reach the OS through the host-registered commands
+        // below. `eval`/`import` are explicitly disabled so a script cannot
+        // string-compile arbitrary code at runtime or pull in external modules —
+        // that would bypass the capability boundary and the operation cap.
+        engine.disable_symbol("eval");
+        engine.disable_symbol("import");
+        engine.set_max_operations(1_000_000);
+        engine.set_max_string_size(1_000_000);
+        engine.set_max_array_size(100_000);
+        engine.set_max_map_size(10_000);
+        engine.set_max_call_levels(64);
 
         let queue = Arc::new(Mutex::new(Vec::new()));
         let ids = Arc::new(Mutex::new(HashMap::new()));
@@ -244,7 +259,11 @@ impl EmbeddedRuntime {
                     }
                 },
             );
+        }
 
+        // `emit_event` is a telemetry/network trigger, so it is gated by `Net`
+        // rather than `WriteWorld`.
+        if caps.can(Capability::Net) {
             let q = Arc::clone(&queue);
             engine.register_fn("emit_event", move |name: &str| {
                 if let Ok(mut v) = q.lock() {
@@ -276,6 +295,15 @@ impl EmbeddedRuntime {
     /// Number of commands currently waiting to be applied.
     pub fn pending(&self) -> usize {
         self.queue.lock().map(|v| v.len()).unwrap_or(0)
+    }
+
+    /// Test-only: enqueue pre-built commands without running a script, so the
+    /// host-side `apply` mapping can be asserted directly.
+    #[cfg(test)]
+    pub(crate) fn push_commands_for_test(&self, cmds: Vec<ScriptCommand>) {
+        if let Ok(mut q) = self.queue.lock() {
+            q.extend(cmds);
+        }
     }
 
     /// Drain enqueued commands and apply them to `world`.
@@ -427,5 +455,113 @@ mod tests {
         let entities = world.entities();
         let t = world.get_component::<Transform>(entities[0]).unwrap();
         assert_eq!(t.translation, Vec3::new(7.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn emit_event_requires_net_capability() {
+        // emit_event is a network/telemetry trigger, so it must be gated by Net,
+        // not by WriteWorld.
+        let caps = Capabilities::none()
+            .grant(Capability::Spawn)
+            .grant(Capability::WriteWorld)
+            .grant(Capability::Log)
+            .clone();
+        let mut rt = EmbeddedRuntime::new(caps);
+        let mut world = World::new();
+        let err = rt
+            .run_and_apply("emit_event(\"x\");", &mut world)
+            .unwrap_err();
+        assert!(
+            format!("{err}").contains("emit_event"),
+            "denied emit_event should error: {err}"
+        );
+        // WriteWorld (set_transform) still works without Net.
+        rt.run_and_apply(
+            "let e = spawn_entity(); set_transform(e, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0);",
+            &mut world,
+        )
+        .unwrap();
+        assert_eq!(world.entity_count(), 1);
+    }
+
+    #[test]
+    fn syntax_error_is_reported_as_compile() {
+        let mut rt = EmbeddedRuntime::new(Capabilities::all());
+        let mut world = World::new();
+        let err = rt.run_and_apply("let x = ;", &mut world).unwrap_err();
+        assert!(
+            matches!(err, ScriptError::Compile(_)),
+            "syntax errors should be Compile, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn write_world_denied_blocks_set_transform() {
+        // Spawn is allowed but WriteWorld is not, so set_transform must not exist.
+        let caps = Capabilities::none().grant(Capability::Spawn).clone();
+        let mut rt = EmbeddedRuntime::new(caps);
+        let mut world = World::new();
+        let err = rt
+            .run_and_apply(
+                "let e = spawn_entity(); set_transform(e, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0);",
+                &mut world,
+            )
+            .unwrap_err();
+        assert!(
+            format!("{err}").contains("set_transform"),
+            "denied set_transform should error: {err}"
+        );
+        // The spawn queued before the failing call must not have applied, because
+        // the whole script aborts at the first unregistered function.
+        assert_eq!(world.entity_count(), 0);
+    }
+
+    #[test]
+    fn no_eval_surface_in_sandbox() {
+        // `eval` would be a direct sandbox escape; it must not exist on the engine.
+        let mut rt = EmbeddedRuntime::new(Capabilities::all());
+        let mut world = World::new();
+        let err = rt.run_and_apply("eval(\"spawn_entity()\");", &mut world).unwrap_err();
+        assert!(
+            format!("{err}").contains("eval"),
+            "eval should be unavailable in the sandbox: {err}"
+        );
+    }
+
+    #[test]
+    fn infinite_loop_is_bounded_by_operation_limit() {
+        // A runaway script must not hang the host; the operation cap turns an
+        // unbounded loop into a (caught) runtime error.
+        let mut rt = EmbeddedRuntime::new(Capabilities::all());
+        let mut world = World::new();
+        let result = rt.run_and_apply("let x = 0; while true { x += 1; }", &mut world);
+        assert!(
+            result.is_err(),
+            "infinite loop should be terminated by the operation limit"
+        );
+    }
+
+    #[test]
+    fn script_command_round_trips_through_apply() {
+        // Apply commands directly (not via script) to confirm the host side of
+        // the boundary maps a Spawn + SetTransform to real ECS state.
+        let mut rt = EmbeddedRuntime::new(Capabilities::all());
+        let mut world = World::new();
+        rt.push_commands_for_test(vec![
+            ScriptCommand::Spawn { id: 42 },
+            ScriptCommand::SetTransform {
+                id: 42,
+                pos: (1.0, 2.0, 3.0),
+                rot_euler: (0.0, 0.0, 0.0),
+                scale: (2.0, 2.0, 2.0),
+            },
+            ScriptCommand::Log("applied".into()),
+        ]);
+        rt.apply(&mut world);
+        assert_eq!(world.entity_count(), 1);
+        let e = world.entities()[0];
+        let t = world.get_component::<Transform>(e).unwrap();
+        assert_eq!(t.translation, Vec3::new(1.0, 2.0, 3.0));
+        assert_eq!(t.scale, Vec3::new(2.0, 2.0, 2.0));
     }
 }

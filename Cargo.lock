@@ -1483,6 +1483,7 @@ version = "0.1.0"
 dependencies = [
  "glam 0.29.3",
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1582,6 +1583,8 @@ dependencies = [
  "libloading",
  "log",
  "nova-ecs",
+ "nova-gameplay-example",
+ "nova-input",
 ]
 
 [[package]]

@@ -10,3 +10,7 @@ description = "Hot-reloadable Rust gameplay modules for TPT Nova: stable C-ABI b
 nova-ecs = { workspace = true }
 libloading = "0.8"
 log = "0.4"
+
+[dev-dependencies]
+nova-gameplay-example = { path = "../nova-gameplay-example" }
+nova-input = { workspace = true }

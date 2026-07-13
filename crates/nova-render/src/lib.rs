@@ -248,10 +248,8 @@ impl Renderer {
             .into_iter()
             .next()
         {
-            let mut proj = *cam;
-            proj.aspect = self.config.width as f32 / self.config.height.max(1) as f32;
-            let view = gt.0.inverse();
-            camera_view_proj = Some(proj.perspective() * view);
+            let aspect = self.config.width as f32 / self.config.height.max(1) as f32;
+            camera_view_proj = Some(compute_view_proj(cam, gt, aspect));
         }
         let view_proj = camera_view_proj.unwrap_or(Mat4::IDENTITY);
 
@@ -332,6 +330,17 @@ impl Renderer {
     pub fn size(&self) -> winit::dpi::PhysicalSize<u32> {
         self.window.inner_size()
     }
+}
+
+/// Build the view-projection matrix for a camera at `gt` with `aspect`.
+///
+/// Pure (no GPU): `proj * view` where `view = gt⁻¹`. Kept separate from
+/// [`Renderer::render`] so the camera math is unit-testable.
+pub(crate) fn compute_view_proj(cam: &Camera, gt: &GlobalTransform, aspect: f32) -> Mat4 {
+    let mut proj = *cam;
+    proj.aspect = aspect;
+    let view = gt.0.inverse();
+    proj.perspective() * view
 }
 
 fn create_depth_view(
@@ -469,3 +478,62 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     return vec4<f32>(base * diff, 1.0);
 }
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nova_ecs::transform::{Camera, GlobalTransform};
+    use nova_ecs::Vec3;
+
+    #[test]
+    fn cube_has_correct_topology() {
+        let (vertices, indices) = build_cube();
+        // 6 faces * 4 verts, 6 faces * 2 tris * 3 indices.
+        assert_eq!(vertices.len(), 24);
+        assert_eq!(indices.len(), 36);
+        // Every index must reference a real vertex.
+        assert!(indices.iter().all(|&i| (i as usize) < vertices.len()));
+        // Each face's four verts must share the same normal.
+        for face in 0..6 {
+            let n0 = vertices[face * 4].normal;
+            for k in 1..4 {
+                assert_eq!(vertices[face * 4 + k].normal, n0, "face {face} normal mismatch");
+            }
+        }
+    }
+
+    #[test]
+    fn identity_camera_view_proj_equals_perspective() {
+        let mut cam = Camera::default();
+        cam.aspect = 1.6;
+        let expected = cam.perspective();
+        let vp = compute_view_proj(&Camera::default(), &GlobalTransform::identity(), 1.6);
+        assert!(
+            vp.abs_diff_eq(expected, 1e-5),
+            "identity camera view_proj must equal its perspective projection"
+        );
+    }
+
+    #[test]
+    fn camera_translation_offsets_view() {
+        // A camera translated +5 on Z should produce a different view_proj than
+        // one at the origin, and the world origin should land behind it (negative
+        // view-space z, i.e. in front of a camera looking down -Z).
+        let at_origin = compute_view_proj(&Camera::default(), &GlobalTransform::identity(), 1.0);
+        let mut gt = GlobalTransform::identity();
+        gt.0 = Mat4::from_translation(Vec3::new(0.0, 0.0, 5.0));
+        let moved = compute_view_proj(&Camera::default(), &gt, 1.0);
+
+        assert!(!at_origin.abs_diff_eq(moved, 1e-5), "view should change with camera pose");
+
+        // The view matrix is the camera transform's inverse, so the world origin
+        // lands at view-space z = -5 (directly in front of a camera at +5 on Z,
+        // which looks down -Z). Check the view portion directly.
+        let view = gt.0.inverse();
+        assert!(
+            (view.w_axis.z + 5.0).abs() < 1e-4,
+            "origin should sit 5 units in front of the +5 camera, got {}",
+            view.w_axis.z
+        );
+    }
+}

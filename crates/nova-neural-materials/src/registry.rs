@@ -9,7 +9,6 @@ use crate::source::FrameSource;
 use crate::texture::NeuralTexture;
 
 struct Entry {
-    #[allow(dead_code)]
     prompt: MaterialPrompt,
     source: Box<dyn FrameSource>,
     latest: Option<Frame>,
@@ -41,9 +40,23 @@ impl NeuralMaterialRegistry {
     }
 
     /// Swap in a different provider (e.g. a real Video LLM client). Existing
-    /// materials keep their feeds; new registrations use the new provider.
-    pub fn set_provider(&mut self, provider: Box<dyn NeuralMaterialProvider>) {
+    /// materials are re-opened against the new provider (their stored prompt is
+    /// reused), so their feeds keep working; new registrations also use it.
+    pub fn set_provider(
+        &mut self,
+        provider: Box<dyn NeuralMaterialProvider>,
+    ) -> Result<(), ProviderError> {
         self.provider = provider;
+        let ids: Vec<String> = self.materials.keys().cloned().collect();
+        for id in ids {
+            let prompt = self.materials[&id].prompt.clone();
+            let source = self.provider.open(&prompt)?;
+            if let Some(entry) = self.materials.get_mut(&id) {
+                entry.source = source;
+                entry.latest = None;
+            }
+        }
+        Ok(())
     }
 
     /// Open a feed described by `prompt` and begin tracking it under `prompt.id`.

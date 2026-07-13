@@ -49,6 +49,26 @@ impl NeuralTexture {
                 actual: frame.width as usize * frame.height as usize * 4,
             });
         }
+        // wgpu requires `bytes_per_row` to be a multiple of 256 for multi-row
+        // copies; pad each row of the tightly-packed frame when needed.
+        let tight = 4 * self.width as usize;
+        let aligned = tight.next_multiple_of(256);
+        let padded: Option<Vec<u8>> = if aligned != tight {
+            let mut p = Vec::with_capacity(aligned * self.height as usize);
+            for y in 0..self.height as usize {
+                let start = y * tight;
+                p.extend_from_slice(&frame.rgba[start..start + tight]);
+                p.resize(p.len() + (aligned - tight), 0);
+            }
+            Some(p)
+        } else {
+            None
+        };
+        let data: &[u8] = match &padded {
+            Some(p) => p,
+            None => &frame.rgba,
+        };
+
         queue.write_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &self.texture,
@@ -56,10 +76,10 @@ impl NeuralTexture {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            &frame.rgba,
+            data,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(4 * self.width),
+                bytes_per_row: Some(aligned as u32),
                 rows_per_image: Some(self.height),
             },
             wgpu::Extent3d {

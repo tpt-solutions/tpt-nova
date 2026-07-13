@@ -320,4 +320,13 @@ mod tests {
     fn abi_version_is_stable_const() {
         assert_eq!(ABI_VERSION, 1);
     }
+
+    #[test]
+    fn abi_mismatch_is_rejected() {
+        let err = ScriptError::AbiMismatch {
+            host: ABI_VERSION,
+            module: ABI_VERSION + 1,
+        };
+        assert!(format!("{err}").contains("ABI mismatch"));
+    }
 }

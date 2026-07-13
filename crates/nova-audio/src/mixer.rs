@@ -92,4 +92,26 @@ mod tests {
         assert_eq!(m.gain(Bus::Sfx, 1.0), 0.0);
         assert_eq!(m.gain(Bus::Sfx, -1.0), 0.0);
     }
+
+    #[test]
+    fn buses_are_independent() {
+        let mut m = Mixer::new();
+        m.set_bus(Bus::Sfx, 0.5);
+        // Music bus is untouched by an SFX change.
+        assert_eq!(m.gain(Bus::Sfx, 1.0), 0.5);
+        assert_eq!(m.gain(Bus::Music, 1.0), 1.0);
+        m.set_bus(Bus::Music, 0.25);
+        // And the SFX bus is untouched by a music change.
+        assert_eq!(m.gain(Bus::Music, 1.0), 0.25);
+        assert_eq!(m.gain(Bus::Sfx, 1.0), 0.5);
+    }
+
+    #[test]
+    fn gain_combines_master_bus_and_sound_volume() {
+        let mut m = Mixer::new();
+        m.set_master(0.5);
+        m.set_bus(Bus::Music, 0.5);
+        // 1.0 master->0.5, music bus 0.5, sound volume 0.5 => 0.5*0.5*0.5 = 0.125
+        assert_eq!(m.gain(Bus::Music, 0.5), 0.125);
+    }
 }

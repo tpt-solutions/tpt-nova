@@ -68,3 +68,53 @@ pub fn decompose_meshes(meshes: &[MeshData]) -> Result<Vec<ConvexPart>, IngestEr
     }
     Ok(all)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mesh(vertices: &[[f32; 3]], indices: &[u32]) -> MeshData {
+        MeshData {
+            name: "t".into(),
+            vertices: vertices.to_vec(),
+            indices: indices.to_vec(),
+        }
+    }
+
+    #[test]
+    fn degenerate_mesh_with_too_few_indices_errors() {
+        // A single vertex and no triangles must be rejected, not decomposed.
+        let m = mesh(&[[0.0, 0.0, 0.0]], &[]);
+        assert!(matches!(
+            decompose_convex(&m, None),
+            Err(IngestError::EmptyMesh)
+        ));
+    }
+
+    #[test]
+    fn flat_plane_decomposes_without_panic() {
+        // A degenerate (zero-volume) quad: 2 triangles in a plane. VHACD may
+        // yield no usable hulls, but the call must not panic.
+        let verts = [
+            [-1.0, 0.0, -1.0],
+            [1.0, 0.0, -1.0],
+            [1.0, 0.0, 1.0],
+            [-1.0, 0.0, 1.0],
+        ];
+        let idx = [0u32, 1, 2, 0, 2, 3];
+        let result = decompose_convex(&mesh(&verts, &idx), None);
+        assert!(result.is_ok(), "flat plane decomposition must not panic");
+        // A zero-volume mesh may legitimately produce no convex parts; either
+        // way we should get a defined (possibly empty) result.
+        let _ = result.unwrap();
+    }
+
+    #[test]
+    fn single_triangle_decomposes_without_panic() {
+        let verts = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+        let idx = [0u32, 1, 2];
+        let result = decompose_convex(&mesh(&verts, &idx), None);
+        assert!(result.is_ok());
+        let _ = result.unwrap();
+    }
+}

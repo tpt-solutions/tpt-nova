@@ -29,6 +29,10 @@ pub struct InputState {
     pub buttons: HashSet<MouseButton>,
     /// Accumulated scroll delta since the last `end_frame`.
     pub scroll: f32,
+    /// Whether a real cursor position has been observed yet. Until the first
+    /// `CursorMoved` we have no "prior position" to diff against, so the first
+    /// sample must not produce a spurious delta.
+    seeded: bool,
 }
 
 impl InputState {
@@ -36,55 +40,84 @@ impl InputState {
     pub fn apply_event(&mut self, event: &WindowEvent) {
         match event {
             WindowEvent::KeyboardInput { event, .. } => {
-                use winit::event::ElementState;
                 let code = match event.physical_key {
                     PhysicalKey::Code(c) => c,
                     _ => return,
                 };
-                match event.state {
-                    ElementState::Pressed => {
-                        if !self.keys.contains(&code) {
-                            self.pressed_this_frame.insert(code);
-                        }
-                        self.keys.insert(code);
-                    }
-                    ElementState::Released => {
-                        self.keys.remove(&code);
-                        self.released_this_frame.insert(code);
-                    }
-                }
+                Self::apply_key(self, code, event.state);
             }
             WindowEvent::CursorMoved { position, .. } => {
-                let x = position.x as f32;
-                let y = position.y as f32;
-                let dx = x - self.mouse_pos.0;
-                let dy = y - self.mouse_pos.1;
-                self.mouse_pos = (x, y);
-                // Only accumulate delta once we have a prior position.
-                if self.mouse_pos != (x, y) {
-                    self.mouse_delta.0 += dx;
-                    self.mouse_delta.1 += dy;
-                }
+                self.apply_cursor_moved(position.x, position.y);
             }
             WindowEvent::MouseInput { state, button, .. } => {
-                use winit::event::ElementState;
-                match state {
-                    ElementState::Pressed => {
-                        self.buttons.insert(*button);
-                    }
-                    ElementState::Released => {
-                        self.buttons.remove(button);
-                    }
-                }
+                self.apply_mouse_button(*button, *state);
             }
             WindowEvent::MouseWheel { delta, .. } => {
-                use winit::event::MouseScrollDelta;
-                match delta {
-                    MouseScrollDelta::LineDelta(_, y) => self.scroll += *y,
-                    MouseScrollDelta::PixelDelta(p) => self.scroll += p.y as f32,
-                }
+                self.apply_mouse_wheel(*delta);
             }
             _ => {}
+        }
+    }
+
+    /// Apply a single key transition. Split out from [`InputState::apply_event`]
+    /// so the keyboard mapping can be unit-tested without constructing a winit
+    /// `KeyEvent` (which has a private field and no public constructor).
+    pub(crate) fn apply_key(&mut self, code: KeyCode, state: winit::event::ElementState) {
+        use winit::event::ElementState;
+        match state {
+            ElementState::Pressed => {
+                if !self.keys.contains(&code) {
+                    self.pressed_this_frame.insert(code);
+                }
+                self.keys.insert(code);
+            }
+            ElementState::Released => {
+                self.keys.remove(&code);
+                self.released_this_frame.insert(code);
+            }
+        }
+    }
+
+    /// Apply a cursor movement. Like [`InputState::apply_key`], this is the
+    /// testable core that [`InputState::apply_event`] delegates to.
+    pub(crate) fn apply_cursor_moved(&mut self, x: f64, y: f64) {
+        let x = x as f32;
+        let y = y as f32;
+        let dx = x - self.mouse_pos.0;
+        let dy = y - self.mouse_pos.1;
+        let had_prior = self.seeded;
+        self.mouse_pos = (x, y);
+        self.seeded = true;
+        // Only accumulate delta once we have a prior position.
+        if had_prior {
+            self.mouse_delta.0 += dx;
+            self.mouse_delta.1 += dy;
+        }
+    }
+
+    /// Apply a mouse button transition.
+    pub(crate) fn apply_mouse_button(
+        &mut self,
+        button: MouseButton,
+        state: winit::event::ElementState,
+    ) {
+        use winit::event::ElementState;
+        match state {
+            ElementState::Pressed => {
+                self.buttons.insert(button);
+            }
+            ElementState::Released => {
+                self.buttons.remove(&button);
+            }
+        }
+    }
+
+    /// Apply a scroll-wheel delta.
+    pub(crate) fn apply_mouse_wheel(&mut self, delta: winit::event::MouseScrollDelta) {
+        use winit::event::MouseScrollDelta;
+        match delta {
+            MouseScrollDelta::LineDelta(_, y) => self.scroll += y,
+            MouseScrollDelta::PixelDelta(p) => self.scroll += p.y as f32,
         }
     }
 
@@ -153,4 +186,187 @@ pub fn default_action_map() -> ActionMap {
         .bind("spin_up", vec![KeyCode::KeyQ])
         .bind("spin_down", vec![KeyCode::KeyE]);
     map
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use winit::event::{
+        ElementState, MouseButton, MouseScrollDelta, WindowEvent,
+    };
+    use winit::dpi::PhysicalPosition;
+    use winit::keyboard::KeyCode;
+
+    // ---- Keyboard event -> InputState mapping ----------------------------
+
+    #[test]
+    fn key_press_sets_down_and_pressed_sets() {
+        let mut s = InputState::default();
+        s.apply_key(KeyCode::KeyW, ElementState::Pressed);
+        assert!(s.is_key_down(KeyCode::KeyW));
+        assert!(s.key_just_pressed(KeyCode::KeyW));
+    }
+
+    #[test]
+    fn key_release_removes_from_down_and_records_release() {
+        let mut s = InputState::default();
+        s.apply_key(KeyCode::KeyW, ElementState::Pressed);
+        s.apply_key(KeyCode::KeyW, ElementState::Released);
+        assert!(!s.is_key_down(KeyCode::KeyW));
+        assert!(s.released_this_frame.contains(&KeyCode::KeyW));
+        // `pressed_this_frame` is only cleared by `end_frame`, so a press that
+        // happened earlier in the same frame is still recorded there.
+        assert!(s.pressed_this_frame.contains(&KeyCode::KeyW));
+    }
+
+    #[test]
+    fn repeat_press_does_not_re_add_to_pressed_set() {
+        let mut s = InputState::default();
+        s.apply_key(KeyCode::KeyA, ElementState::Pressed);
+        // Auto-repeat: key already down, another press arrives.
+        s.apply_key(KeyCode::KeyA, ElementState::Pressed);
+        assert_eq!(s.pressed_this_frame.len(), 1);
+    }
+
+    #[test]
+    fn apply_event_ignores_unrelated_window_events() {
+        // `WindowEvent::Focused` carries no input; it must not disturb state.
+        let mut s = InputState::default();
+        s.apply_key(KeyCode::KeyW, ElementState::Pressed);
+        s.apply_event(&WindowEvent::Focused(true));
+        assert!(s.is_key_down(KeyCode::KeyW));
+        assert_eq!(s.scroll, 0.0);
+        assert_eq!(s.mouse_pos, (0.0, 0.0));
+    }
+
+    // ---- Mouse event -> InputState mapping -------------------------------
+    // These call the `pub(crate)` helpers that `apply_event` delegates to, since
+    // winit's `WindowEvent` variants carry a `DeviceId` with no public
+    // constructor.
+
+    #[test]
+    fn cursor_moved_updates_position_and_delta() {
+        let mut s = InputState::default();
+        s.apply_cursor_moved(10.0, 20.0);
+        assert_eq!(s.mouse_pos, (10.0, 20.0));
+        // First move: no prior position, delta stays zero.
+        assert_eq!(s.mouse_delta, (0.0, 0.0));
+
+        s.apply_cursor_moved(15.0, 25.0);
+        assert_eq!(s.mouse_pos, (15.0, 25.0));
+        assert_eq!(s.mouse_delta, (5.0, 5.0));
+    }
+
+    #[test]
+    fn mouse_button_down_and_up() {
+        let mut s = InputState::default();
+        s.apply_mouse_button(MouseButton::Left, ElementState::Pressed);
+        assert!(s.buttons.contains(&MouseButton::Left));
+
+        s.apply_mouse_button(MouseButton::Left, ElementState::Released);
+        assert!(!s.buttons.contains(&MouseButton::Left));
+    }
+
+    #[test]
+    fn mouse_wheel_line_and_pixel_deltas() {
+        let mut s = InputState::default();
+        s.apply_mouse_wheel(MouseScrollDelta::LineDelta(0.0, 3.0));
+        assert_eq!(s.scroll, 3.0);
+
+        s.apply_mouse_wheel(MouseScrollDelta::PixelDelta(PhysicalPosition::new(
+            0.0_f64, 10.0_f64,
+        )));
+        assert_eq!(s.scroll, 13.0);
+    }
+
+    #[test]
+    fn end_frame_clears_per_frame_accumulators() {
+        let mut s = InputState::default();
+        s.apply_key(KeyCode::KeyW, ElementState::Pressed);
+        s.apply_mouse_wheel(MouseScrollDelta::LineDelta(0.0, 2.0));
+        assert!(s.key_just_pressed(KeyCode::KeyW));
+        assert_eq!(s.scroll, 2.0);
+
+        s.end_frame();
+        assert!(!s.key_just_pressed(KeyCode::KeyW));
+        assert_eq!(s.scroll, 0.0);
+        // Held keys persist across frames.
+        assert!(s.is_key_down(KeyCode::KeyW));
+    }
+
+    // ---- Action mapping --------------------------------------------------
+
+    #[test]
+    fn default_action_map_has_expected_bindings() {
+        let map = default_action_map();
+        let state = InputState::default();
+        // Unbound keys report no activity.
+        assert!(!map.is_active(&state, "move_forward"));
+        assert!(!map.is_active(&state, "does_not_exist"));
+
+        // W and ArrowUp both drive move_forward.
+        assert!(map
+            .bindings()
+            .get("move_forward")
+            .map(|k| k.contains(&KeyCode::KeyW) && k.contains(&KeyCode::ArrowUp))
+            .unwrap_or(false));
+    }
+
+    #[test]
+    fn action_active_when_bound_key_held() {
+        let map = default_action_map();
+        let mut state = InputState::default();
+        state.keys.insert(KeyCode::KeyW);
+        assert!(map.is_active(&state, "move_forward"));
+        assert!(!map.is_active(&state, "move_back"));
+
+        state.keys.insert(KeyCode::ArrowDown);
+        assert!(map.is_active(&state, "move_back"));
+    }
+
+    #[test]
+    fn action_just_triggered_only_on_press_frame() {
+        let map = default_action_map();
+        let mut state = InputState::default();
+        state.keys.insert(KeyCode::KeyW);
+        // Held, not freshly pressed -> just_triggered is false.
+        assert!(map.is_active(&state, "move_forward"));
+        assert!(!map.just_triggered(&state, "move_forward"));
+
+        state.pressed_this_frame.insert(KeyCode::KeyW);
+        assert!(map.just_triggered(&state, "move_forward"));
+    }
+
+    #[test]
+    fn rebinding_replaces_previous_keys() {
+        let mut map = ActionMap::new();
+        map.bind("jump", vec![KeyCode::Space]);
+        assert!(map.is_active(
+            &InputState {
+                keys: {
+                    let mut h = std::collections::HashSet::new();
+                    h.insert(KeyCode::Space);
+                    h
+                },
+                ..Default::default()
+            },
+            "jump"
+        ));
+
+        map.bind("jump", vec![KeyCode::KeyF]);
+        let mut state = InputState::default();
+        state.keys.insert(KeyCode::Space);
+        assert!(!map.is_active(&state, "jump"));
+        state.keys.insert(KeyCode::KeyF);
+        assert!(map.is_active(&state, "jump"));
+    }
+
+    #[test]
+    fn unbound_action_is_noop() {
+        let map = ActionMap::new();
+        let mut state = InputState::default();
+        state.keys.insert(KeyCode::KeyW);
+        assert!(!map.is_active(&state, "anything"));
+        assert!(!map.just_triggered(&state, "anything"));
+    }
 }

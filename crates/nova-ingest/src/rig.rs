@@ -82,4 +82,32 @@ mod tests {
             assert!(s.abs_diff_eq(Mat4::IDENTITY, 1e-5));
         }
     }
+
+    #[test]
+    fn flat_bounds_still_produces_a_spine() {
+        // A zero-height (flat) mesh must not cause division issues or panic; the
+        // rig clamps to at least two bones spanning the (degenerate) box.
+        let flat = Aabb {
+            min: Vec3::new(-1.0, 0.0, -1.0),
+            max: Vec3::new(1.0, 0.0, 1.0),
+        };
+        let sk = auto_rig(&flat, 3);
+        assert_eq!(sk.bones.len(), 3);
+        assert!(sk.bones[0].parent.is_none());
+        assert!(sk.bones[1].parent == Some(0));
+    }
+
+    #[test]
+    fn segment_count_is_respected_and_clamped() {
+        let bounds = Aabb {
+            min: Vec3::new(0.0, 0.0, 0.0),
+            max: Vec3::new(1.0, 4.0, 1.0),
+        };
+        // Requesting fewer than 2 segments must clamp up to 2.
+        let sk = auto_rig(&bounds, 1);
+        assert_eq!(sk.bones.len(), 2);
+        // Requesting 5 is honored.
+        let sk5 = auto_rig(&bounds, 5);
+        assert_eq!(sk5.bones.len(), 5);
+    }
 }

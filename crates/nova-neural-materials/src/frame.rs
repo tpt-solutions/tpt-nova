@@ -43,7 +43,10 @@ impl Frame {
         rgba: Vec<u8>,
         timestamp_ms: u64,
     ) -> Result<Self, FrameError> {
-        let expected = width as usize * height as usize * 4;
+        let expected = expected_len(width, height).ok_or(FrameError::SizeMismatch {
+            expected: 0,
+            actual: rgba.len(),
+        })?;
         if rgba.len() != expected {
             return Err(FrameError::SizeMismatch {
                 expected,
@@ -65,7 +68,10 @@ impl Frame {
 
     /// Validate byte length; cheap re-check before a GPU upload.
     pub fn validate(&self) -> Result<(), FrameError> {
-        let expected = self.width as usize * self.height as usize * 4;
+        let expected = expected_len(self.width, self.height).ok_or(FrameError::SizeMismatch {
+            expected: 0,
+            actual: self.rgba.len(),
+        })?;
         if self.rgba.len() != expected {
             return Err(FrameError::SizeMismatch {
                 expected,
@@ -74,4 +80,13 @@ impl Frame {
         }
         Ok(())
     }
+}
+
+/// Compute the expected RGBA8 byte length without overflowing on large
+/// (potentially untrusted/deserialized) dimensions.
+fn expected_len(width: u32, height: u32) -> Option<usize> {
+    let w = width as u64;
+    let h = height as u64;
+    let len = w.checked_mul(h)?.checked_mul(4)?;
+    usize::try_from(len).ok()
 }

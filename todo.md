@@ -101,6 +101,80 @@
 - [ ] Public Alpha release checklist (docs, licensing review, changelog)
 - [ ] Sample game(s) built end-to-end using the full pipeline as a proof point
 
+## Testing Coverage (Cross-Cutting)
+Audit (2026-07-14): `nova-ecs`, `nova-app`, and `nova-input` initially had **zero**
+`#[test]` coverage; most other crates had only 1-3 test files. This section tracks
+closing those gaps — check items off as tests land, don't infer coverage from a
+crate's existence.
+
+Progress (2026-07-14): `nova-ecs` (20 tests), `nova-input` (13 tests), and `nova-app`
+(5 tests) now have coverage. `nova-telemetry` and `nova-scene` already shipped tests
+in their `lib.rs`. Remaining: `nova-render`, `nova-physics`, `nova-anim`, `nova-ingest`,
+`nova-ui`, `nova-editor`, `nova-scripting`, `nova-scripting-embedded`, `nova-audio`,
+and the cross-cutting/CI items.
+### nova-ecs
+- [x] Entity spawn/despawn unit tests (including despawn-while-iterating safety)
+- [x] Component storage/query iteration tests (single/multi-component queries, empty results)
+- [x] Scheduler ordering/dependency tests
+- [x] Scene graph parent/child hierarchy tests (reparenting, world-transform propagation, cycles rejected)
+- [x] Serde round-trip tests for ECS state (used by telemetry + scene save/load)
+- [x] Deterministic RNG tests (same seed -> identical stream, zero seed normalized)
+### nova-app
+- [x] Headless/CI-safe smoke test for app shell init (world/scheduler/resources built without a window or GPU; see note)
+- [x] Fixed-timestep loop tests (tick accumulation, seeded RNG determinism across runs)
+### nova-input
+- [x] Keyboard/mouse event -> ECS resource mapping tests
+- [x] Input-action binding tests (e.g. "move_forward" -> W/Up, rebinding, unbound key no-ops)
+### nova-render
+- [ ] Cube pipeline tests beyond current coverage (MVP uniform correctness, camera math)
+- [ ] 2D sprite batching/atlas pipeline tests (batch boundaries, atlas UV correctness)
+- [ ] Forward PBR pipeline tests (shadow-casting light, material binding)
+### nova-physics
+- [ ] Rapier2D/3D sync step tests (component <-> physics-body state round-trip)
+- [ ] Determinism regression tests (same seed/inputs -> identical simulation trace across runs/platforms)
+### nova-telemetry
+- [ ] JSON schema round-trip tests for entity/component state dumps
+- [ ] MessagePack sink round-trip + JSON/MessagePack parity tests
+- [ ] Tick/interval emission timing tests
+### nova-scene
+- [ ] Save/load round-trip tests for full ECS world state
+- [ ] Versioned migration tests (old-version file -> current schema)
+- [ ] Corrupt/malformed scene file handling tests
+### nova-scripting
+- [ ] Hot-reload lifecycle tests (load, swap, unload dylib)
+- [ ] C ABI/trait boundary contract tests (stable across a rebuild)
+### nova-scripting-embedded
+- [ ] Capability-boundary tests (denied capability's function is genuinely absent, not just unreachable)
+- [ ] ScriptCommand generation/application round-trip tests
+- [ ] Sandbox escape attempt tests (no filesystem/network access from scripts)
+### nova-ui
+- [ ] Widget draw-list generation tests (text/button/panel layout)
+- [ ] World-space anchored widget positioning tests
+### nova-editor
+- [ ] Hierarchy panel tests (entity list, parent/child tree updates)
+- [ ] Component inspector edit round-trip tests (UI edit -> ECS component value)
+- [ ] 2D/3D gizmo interaction tests (move/rotate/scale, snapping)
+- [ ] Vibe GUI curve-edit -> physics constraint round-trip tests
+### nova-anim
+- [ ] Keyframe sampling edge-case tests (before first/after last keyframe, single-keyframe clips)
+- [ ] Animation blending/state-machine transition tests (idle/walk/run)
+### nova-ingest
+- [ ] Malformed/unsupported .glb and .obj file handling tests
+- [ ] VHACD convex decomposition edge cases (degenerate/non-manifold meshes)
+- [ ] Auto-rigging pipeline tests on varied mesh topologies
+- [ ] Rapier3D collider generation correctness tests
+### nova-neural-materials
+- [ ] FrameSource/NeuralMaterialProvider contract tests beyond MockProvider happy path
+- [ ] Error/reconnect handling tests (dropped stream, malformed frame)
+- [ ] NeuralTexture GPU upload + NeuralMaterialRegistry tests
+### nova-audio
+- [ ] Mixing/bus volume tests (SFX vs music bus interaction)
+- [ ] Looping edge-case tests (seamless loop points, stop-during-loop)
+### Cross-cutting / CI
+- [ ] Wire up coverage reporting (e.g. `cargo tarpaulin` or `grcov`) into CI and track a baseline
+- [ ] End-to-end integration test spanning multiple crates (ECS + physics + telemetry tick, asserting deterministic output)
+- [ ] Regression test harness for the AI code-injection loop (telemetry read -> mutate -> hot-apply -> verify)
+
 ## Open Decisions
 - [x] Editor framework: **RESOLVED — egui/eframe (Rust-native immediate-mode)** over
       Tauri/ImGui. Rationale: pure-Rust, integrates directly with the existing

@@ -53,12 +53,20 @@ struct MockFrameSource {
     height: u32,
     counter: Arc<AtomicU64>,
     hue_offset: u8,
+    buf: Vec<u8>,
 }
 
 impl FrameSource for MockFrameSource {
     fn next_frame(&mut self) -> Option<Frame> {
         let n = self.counter.fetch_add(1, Ordering::Relaxed);
-        let mut rgba = Vec::with_capacity(self.width as usize * self.height as usize * 4);
+        // Reuse a single retained scratch buffer: clear + reserve keeps the
+        // allocation across calls instead of reallocating per frame. (`Frame`
+        // owns its `rgba` by value, so a brand-new `Vec` is still handed to the
+        // consumer each call; production providers should likewise recycle a
+        // scratch buffer rather than building fresh pixel vectors.)
+        let tight = self.width as usize * self.height as usize * 4;
+        self.buf.clear();
+        self.buf.reserve(tight);
         for y in 0..self.height {
             for x in 0..self.width {
                 let t = (n as f32 * 0.05
@@ -72,10 +80,10 @@ impl FrameSource for MockFrameSource {
                     0.7,
                     0.9,
                 );
-                rgba.extend_from_slice(&[r, g, b, 255]);
+                self.buf.extend_from_slice(&[r, g, b, 255]);
             }
         }
-        Frame::new(self.width, self.height, rgba, n).ok()
+        Frame::new(self.width, self.height, std::mem::take(&mut self.buf), n).ok()
     }
 }
 
@@ -99,6 +107,7 @@ impl NeuralMaterialProvider for MockProvider {
             height: prompt.height,
             counter: Arc::new(AtomicU64::new(0)),
             hue_offset,
+            buf: Vec::with_capacity((prompt.width as usize * prompt.height as usize * 4).max(1)),
         }))
     }
 }

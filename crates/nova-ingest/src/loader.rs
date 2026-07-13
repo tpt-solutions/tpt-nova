@@ -151,3 +151,49 @@ pub fn load_obj(path: &Path) -> Result<Vec<MeshData>, IngestError> {
     }
     Ok(meshes)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unsupported_extension_is_rejected() {
+        let err = load(std::path::Path::new("model.txt"));
+        assert!(matches!(err, Err(IngestError::UnsupportedExtension)));
+    }
+
+    #[test]
+    fn garbage_glb_is_rejected() {
+        let path = std::env::temp_dir().join("nova_ingest_garbage_test.glb");
+        std::fs::write(&path, b"this is definitely not a glb file").unwrap();
+        let result = load_gltf(&path);
+        assert!(result.is_err(), "garbage glb must fail to parse");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn garbage_obj_is_rejected() {
+        let path = std::env::temp_dir().join("nova_ingest_garbage_test.obj");
+        std::fs::write(&path, b"not a wavefront obj at all").unwrap();
+        let result = load_obj(&path);
+        assert!(result.is_err(), "garbage obj must fail to parse");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn aabb_bounds_are_correct() {
+        let pts = [[0.0, 0.0, 0.0], [1.0, 2.0, 3.0], [-1.0, -2.0, -3.0]];
+        let b = Aabb::from_points(&pts);
+        assert_eq!(b.min, Vec3::new(-1.0, -2.0, -3.0));
+        assert_eq!(b.max, Vec3::new(1.0, 2.0, 3.0));
+        assert_eq!(b.center(), Vec3::ZERO);
+        assert_eq!(b.size(), Vec3::new(2.0, 4.0, 6.0));
+    }
+
+    #[test]
+    fn empty_aabb_is_zero() {
+        let b = Aabb::from_points(&[]);
+        assert_eq!(b.min, Vec3::ZERO);
+        assert_eq!(b.max, Vec3::ZERO);
+    }
+}

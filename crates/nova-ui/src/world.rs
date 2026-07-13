@@ -194,4 +194,35 @@ mod tests {
             "higher world Y should map to smaller screen Y"
         );
     }
+
+    #[test]
+    fn nearer_widgets_draw_after_farther_ones() {
+        // A perspective camera at the origin looking down -Z. Points are
+        // visible when in front (negative z); nearer points have smaller NDC z.
+        let proj = Mat4::perspective_rh(60f32.to_radians(), 1.0, 0.01, 100.0);
+        let theme = Theme::default();
+        let far = WorldAnchor {
+            position: Vec3::new(0.0, 0.0, -5.0),
+            text: "far".into(),
+        };
+        let near = WorldAnchor {
+            position: Vec3::new(0.0, 0.0, -2.0),
+            text: "near".into(),
+        };
+        let widgets = project_anchors(&[far.clone(), near.clone()], proj, (200.0, 200.0), &theme);
+        assert!(widgets.iter().all(|w| w.visible));
+        let draw = draw_world_widgets(&widgets, &theme);
+        // Each widget contributes a rect + text, sorted farthest-first.
+        assert_eq!(draw.len(), 4);
+        match (&draw[1], &draw[3]) {
+            (
+                DrawCommand::Text { text: t0, .. },
+                DrawCommand::Text { text: t2, .. },
+            ) => {
+                assert_eq!(t0, "far");
+                assert_eq!(t2, "near");
+            }
+            _ => panic!("expected text commands at positions 1 and 3"),
+        }
+    }
 }

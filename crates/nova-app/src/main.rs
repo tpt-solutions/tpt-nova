@@ -138,11 +138,11 @@ impl App {
         let now = Instant::now();
         let elapsed = now.duration_since(self.last_time).as_secs_f32();
         self.last_time = now;
-        self.accumulator += elapsed.min(0.25); // clamp huge stalls
 
-        while self.accumulator >= FIXED_DT {
+        let (accumulator, steps) = accumulate_fixed_steps(self.accumulator, elapsed, FIXED_DT);
+        self.accumulator = accumulator;
+        for _ in 0..steps {
             self.step();
-            self.accumulator -= FIXED_DT;
         }
 
         if let Some(renderer) = self.renderer.as_mut() {
@@ -156,6 +156,23 @@ impl App {
             input.end_frame();
         }
     }
+}
+
+/// Given the current accumulator and the elapsed real time, return the number
+/// of fixed simulation steps to run this frame plus the leftover accumulator.
+///
+/// A huge stall (e.g. a breakpoint hit or tab switch) is clamped to `0.25`s so a
+/// single frame can never trigger an unbounded catch-up loop. Pulled out of
+/// [`App::render_frame`] so the tick bookkeeping is unit-testable without a
+/// window or GPU.
+pub(crate) fn accumulate_fixed_steps(accumulator: f32, elapsed: f32, dt: f32) -> (f32, u32) {
+    let mut acc = accumulator + elapsed.min(0.25);
+    let mut steps = 0u32;
+    while acc >= dt {
+        acc -= dt;
+        steps += 1;
+    }
+    (acc, steps)
 }
 
 fn movement_system(world: &mut World, cube: Entity) {
@@ -294,4 +311,128 @@ fn main() -> anyhow::Result<()> {
     let mut app = App::new(seed);
     event_loop.run_app(&mut app)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nova_ecs::scheduler::Scheduler;
+    use nova_ecs::transform::{GlobalTransform, Mesh, Transform};
+    use nova_ecs::{Quat, World};
+    use nova_input::{default_action_map, ActionMap, InputState};
+
+    // ---- App shell init (headless, no window/GPU) -------------------------
+
+    #[test]
+    fn app_new_builds_expected_world() {
+        // `App::new` only builds the world/scheduler; it never opens a window or
+        // initializes the renderer, so it is safe under CI with no display.
+        let app = App::new(0xCAFE);
+
+        assert_eq!(app.world.entity_count(), 2);
+        assert!(app.world.has_component::<Transform>(app.cube));
+        assert!(app.world.has_component::<Mesh>(app.cube));
+        assert!(app.world.has_component::<Camera>(app.camera));
+        assert!(app.world.has_component::<GlobalTransform>(app.cube));
+
+        // Resources the systems rely on must be present.
+        assert!(app.world.has_resource::<InputState>());
+        assert!(app.world.has_resource::<ActionMap>());
+        assert!(app.world.has_resource::<nova_ecs::rng::RngResource>());
+        assert!(app.world.has_resource::<TickResource>());
+
+        // The seed flows into the RNG resource.
+        let seed = app
+            .world
+            .resource::<nova_ecs::rng::RngResource>()
+            .unwrap()
+            .seed;
+        assert_eq!(seed, 0xCAFE);
+    }
+
+    #[test]
+    fn fixed_timestep_accumulates_steps() {
+        let dt = FIXED_DT;
+        // Exactly one step fits; accumulator is fully consumed.
+        let (acc, steps) = accumulate_fixed_steps(0.0, dt, dt);
+        assert_eq!(steps, 1);
+        assert!((acc).abs() < 1e-6);
+
+        // Two steps fit into one frame of 2*dt.
+        let (acc, steps) = accumulate_fixed_steps(0.0, dt * 2.0, dt);
+        assert_eq!(steps, 2);
+        assert!((acc).abs() < 1e-6);
+
+        // A large stall is clamped to 0.25s, yielding a bounded step count.
+        // At 60 Hz, 0.25 s is exactly 15 fixed steps.
+        let (acc, steps) = accumulate_fixed_steps(0.0, 100.0, dt);
+        assert_eq!(steps, 15);
+        assert!(acc.abs() < dt);
+
+        // A carry-over accumulator plus a small frame still advances correctly.
+        let (acc, steps) = accumulate_fixed_steps(dt * 0.5, dt * 0.75, dt);
+        assert_eq!(steps, 1);
+        assert!((acc - dt * 0.25).abs() < 1e-6);
+    }
+
+    // ---- Gameplay logic ---------------------------------------------------
+
+    #[test]
+    fn movement_system_rotates_cube_from_active_action() {
+        let mut world = World::new();
+        let cube = world.spawn();
+        world.add_component(cube, Transform::default());
+
+        world.add_resource(InputState::default());
+        world.add_resource(default_action_map());
+
+        // Hold "move_left": expected to nudge the cube's rotation.
+        world
+            .resource_mut::<InputState>()
+            .unwrap()
+            .keys
+            .insert(nova_input::KeyCode::KeyA);
+
+        let before = world.get_component::<Transform>(cube).unwrap().rotation;
+        movement_system(&mut world, cube);
+        let after = world.get_component::<Transform>(cube).unwrap().rotation;
+
+        assert_ne!(before, after);
+        // A pure local spin rotated the cube away from its identity orientation.
+        assert_eq!(before, Quat::IDENTITY);
+        assert_ne!(after, Quat::IDENTITY);
+        // The resulting orientation is still a valid unit quaternion.
+        assert!((after.length() - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn movement_system_is_noop_without_active_action() {
+        let mut world = World::new();
+        let cube = world.spawn();
+        world.add_component(cube, Transform::from_rotation(Quat::from_rotation_y(0.5)));
+
+        world.add_resource(InputState::default());
+        world.add_resource(default_action_map());
+
+        let before = world.get_component::<Transform>(cube).unwrap().rotation;
+        movement_system(&mut world, cube);
+        let after = world.get_component::<Transform>(cube).unwrap().rotation;
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn scheduler_step_advances_tick_resource() {
+        let mut world = World::new();
+        world.add_resource(TickResource { tick: 0 });
+
+        let mut scheduler = Scheduler::new();
+        scheduler.add_system(|w: &mut World| {
+            w.resource_mut::<TickResource>().unwrap().tick += 1;
+        });
+
+        for _ in 0..5 {
+            scheduler.run(&mut world);
+        }
+        assert_eq!(world.resource::<TickResource>().unwrap().tick, 5);
+    }
 }

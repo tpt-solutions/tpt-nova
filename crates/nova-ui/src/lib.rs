@@ -416,4 +416,24 @@ mod tests {
         assert_eq!(rects, 3);
         assert_eq!(texts, 3);
     }
+
+    #[test]
+    fn panel_without_title_omits_title_primitives() {
+        let mut ui = Ui::new(UiInput::default());
+        ui.begin_panel(panel_rect(), None);
+        ui.button("Ok");
+        ui.end_panel();
+        let draw = ui.finish();
+        let rects = draw
+            .iter()
+            .filter(|c| matches!(c, DrawCommand::Rect { .. }))
+            .count();
+        let texts = draw
+            .iter()
+            .filter(|c| matches!(c, DrawCommand::Text { .. }))
+            .count();
+        // panel bg + button bg = 2 rects; button label = 1 text (no title bar).
+        assert_eq!(rects, 2);
+        assert_eq!(texts, 1);
+    }
 }

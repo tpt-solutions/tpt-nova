@@ -268,4 +268,129 @@ mod tests {
             rmp_serde::from_slice(&encode_msgpack(&frame).unwrap()).unwrap();
         assert_eq!(via_json.entities.len(), via_mp.entities.len());
     }
+
+    #[test]
+    fn json_schema_roundtrip_preserves_dump() {
+        let world = sample_world();
+        let frame = dump_world(&world, 5, 123);
+        let json = serde_json::to_string(&frame).expect("serialize json");
+        let back: TelemetryFrame =
+            serde_json::from_str(&json).expect("deserialize json");
+        assert_eq!(back.schema_version, frame.schema_version);
+        assert_eq!(back.tick, frame.tick);
+        assert_eq!(back.seed, frame.seed);
+        assert_eq!(back.entities.len(), frame.entities.len());
+        let original = &frame.entities[0];
+        let restored = &back.entities[0];
+        assert_eq!(restored.id, original.id);
+        assert_eq!(
+            restored.components.get("Transform"),
+            original.components.get("Transform")
+        );
+        assert_eq!(restored.components.get("Mesh"), original.components.get("Mesh"));
+    }
+
+    #[test]
+    fn msgpack_file_sink_roundtrips_to_json() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("nova_telemetry_msgpack_test.bin");
+        let world = sample_world();
+        let frame = dump_world(&world, 11, 7);
+
+        let mut sink = MsgPackFileSink::new(&path);
+        sink.publish(&frame).expect("publish msgpack");
+
+        let bytes = std::fs::read(&path).expect("read msgpack file");
+        let decoded: TelemetryFrame = rmp_serde::from_slice(&bytes).expect("decode msgpack");
+
+        let via_json: TelemetryFrame =
+            serde_json::from_str(&serde_json::to_string(&frame).unwrap()).unwrap();
+        assert_eq!(decoded.entities.len(), via_json.entities.len());
+        assert_eq!(decoded.tick, frame.tick);
+        assert_eq!(decoded.seed, frame.seed);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn msgpack_and_json_decode_to_identical_content() {
+        let world = sample_world();
+        let frame = dump_world(&world, 4, 8);
+        let json = serde_json::to_string(&frame).unwrap();
+        let mp = encode_msgpack(&frame).unwrap();
+        let from_json: TelemetryFrame = serde_json::from_str(&json).unwrap();
+        let from_mp: TelemetryFrame = rmp_serde::from_slice(&mp).unwrap();
+        assert_eq!(from_json.tick, from_mp.tick);
+        assert_eq!(from_json.seed, from_mp.seed);
+        assert_eq!(from_json.entities.len(), from_mp.entities.len());
+        for (a, b) in from_json.entities.iter().zip(from_mp.entities.iter()) {
+            assert_eq!(a.id, b.id);
+            assert_eq!(a.components, b.components);
+        }
+    }
+
+    #[test]
+    fn file_sink_writes_parseable_json() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("nova_telemetry_json_test.json");
+        let world = sample_world();
+        let frame = dump_world(&world, 9, 1);
+
+        let mut sink = FileSink::new(&path);
+        sink.publish(&frame).expect("publish json");
+
+        let text = std::fs::read_to_string(&path).expect("read json file");
+        let back: TelemetryFrame = serde_json::from_str(text.trim()).expect("parse json");
+        assert_eq!(back.tick, frame.tick);
+        assert_eq!(back.entities.len(), 1);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    struct VecSink {
+        frames: Vec<TelemetryFrame>,
+    }
+
+    impl TelemetrySink for VecSink {
+        fn publish(&mut self, frame: &TelemetryFrame) -> io::Result<()> {
+            self.frames.push(frame.clone());
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn emitter_fires_only_on_interval_multiples() {
+        let world = sample_world();
+        let mut emitter = TelemetryEmitter::new(VecSink { frames: Vec::new() }, 3);
+        for tick in 0..7u64 {
+            emitter.maybe_emit(&world, tick, 0).expect("emit");
+        }
+        // Multiples of 3 in [0,6]: 0, 3, 6.
+        assert_eq!(emitter.sink.frames.len(), 3);
+        assert_eq!(emitter.sink.frames[0].tick, 0);
+        assert_eq!(emitter.sink.frames[1].tick, 3);
+        assert_eq!(emitter.sink.frames[2].tick, 6);
+    }
+
+    #[test]
+    fn emitter_does_not_double_emit_same_tick() {
+        let world = sample_world();
+        let mut emitter = TelemetryEmitter::new(VecSink { frames: Vec::new() }, 2);
+        let first = emitter.maybe_emit(&world, 4, 0).expect("emit");
+        let second = emitter.maybe_emit(&world, 4, 0).expect("emit");
+        assert!(first);
+        assert!(!second);
+        assert_eq!(emitter.sink.frames.len(), 1);
+    }
+
+    #[test]
+    fn emitter_interval_clamped_to_at_least_one() {
+        let world = sample_world();
+        let mut emitter = TelemetryEmitter::new(VecSink { frames: Vec::new() }, 0);
+        // Interval 0 must clamp to 1, so every tick emits.
+        for tick in 0..3u64 {
+            emitter.maybe_emit(&world, tick, 0).expect("emit");
+        }
+        assert_eq!(emitter.sink.frames.len(), 3);
+    }
 }

@@ -596,4 +596,115 @@ mod tests {
         // Bone 0 moved to y=1, its skin = world(translate y=1) * inv_bind(identity) = translate y=1.
         assert!(skins.0[0].abs_diff_eq(Mat4::from_translation(Vec3::new(0.0, 1.0, 0.0)), 1e-4));
     }
+
+    #[test]
+    fn sample_clamps_before_first_and_after_last_keyframe() {
+        let sk = two_bone_skeleton();
+        let clip = translate_clip(0, Vec3::ZERO, Vec3::new(0.0, 10.0, 0.0), 1.0);
+        let early = sample_clip(&clip, &sk, -5.0);
+        assert_eq!(early[0].translation, Vec3::ZERO);
+        let late = sample_clip(&clip, &sk, 100.0);
+        assert!(
+            (late[0].translation.y - 10.0).abs() < 1e-4,
+            "expected clamp to last keyframe, got {}",
+            late[0].translation.y
+        );
+    }
+
+    #[test]
+    fn single_keyframe_clip_is_constant_in_time() {
+        let sk = two_bone_skeleton();
+        let clip = AnimationClip {
+            name: "static".into(),
+            duration: 1.0,
+            channels: vec![Channel::new(
+                0,
+                vec![0.0],
+                vec![Vec3::new(0.0, 3.0, 0.0)],
+                vec![Quat::IDENTITY],
+                vec![Vec3::ONE],
+            )],
+        };
+        let a = sample_clip(&clip, &sk, 0.0);
+        let b = sample_clip(&clip, &sk, 0.5);
+        let c = sample_clip(&clip, &sk, 1.0);
+        assert_eq!(a[0].translation, b[0].translation);
+        assert_eq!(b[0].translation, c[0].translation);
+        assert!((a[0].translation.y - 3.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn state_machine_chains_idle_walk_run() {
+        let sk = two_bone_skeleton();
+        let idle = translate_clip(0, Vec3::ZERO, Vec3::ZERO, 1.0);
+        let walk = translate_clip(0, Vec3::ZERO, Vec3::new(0.0, 2.0, 0.0), 1.0);
+        let run = translate_clip(0, Vec3::ZERO, Vec3::new(0.0, 5.0, 0.0), 1.0);
+        let mut g = AnimationGraph::new(sk, vec![idle, walk, run], "idle");
+        for (i, name) in ["idle", "walk", "run"].iter().enumerate() {
+            g.add_state(AnimState {
+                name: name.to_string(),
+                clip: i,
+                speed: 1.0,
+                loop_: true,
+            });
+        }
+        g.add_transition(AnimTransition {
+            from: "idle".into(),
+            to: "walk".into(),
+            duration: 0.5,
+        });
+        g.add_transition(AnimTransition {
+            from: "walk".into(),
+            to: "run".into(),
+            duration: 0.5,
+        });
+
+        // idle -> walk finishes on clip B, mid-point of its travel.
+        assert!(g.transition_to("walk"));
+        g.update(0.5);
+        assert!(!g.blending, "idle->walk transition should complete");
+        assert!((g.pose()[0].translation.y - 1.0).abs() < 1e-3);
+
+        // walk -> run finishes on clip C.
+        assert!(g.transition_to("run"));
+        g.update(0.5);
+        assert!(!g.blending, "walk->run transition should complete");
+        assert!((g.pose()[0].translation.y - 2.5).abs() < 1e-3);
+
+        // No run->idle / run->walk edges exist, so these are rejected.
+        assert!(!g.transition_to("idle"));
+        assert!(!g.transition_to("walk"));
+
+        // A transition that is already in progress cannot be re-triggered.
+        assert!(g.transition_to("idle") == false);
+    }
+
+    #[test]
+    fn no_transition_while_blending() {
+        let sk = two_bone_skeleton();
+        let a = translate_clip(0, Vec3::ZERO, Vec3::new(0.0, 2.0, 0.0), 1.0);
+        let b = translate_clip(0, Vec3::ZERO, Vec3::new(0.0, 4.0, 0.0), 1.0);
+        let mut g = AnimationGraph::new(sk, vec![a, b], "A");
+        g.add_state(AnimState {
+            name: "A".into(),
+            clip: 0,
+            speed: 1.0,
+            loop_: true,
+        });
+        g.add_state(AnimState {
+            name: "B".into(),
+            clip: 1,
+            speed: 1.0,
+            loop_: true,
+        });
+        g.add_transition(AnimTransition {
+            from: "A".into(),
+            to: "B".into(),
+            duration: 1.0,
+        });
+        assert!(g.transition_to("B"));
+        g.update(0.2); // mid-blend
+        assert!(g.blending);
+        assert!(!g.transition_to("B"));
+    }
 }

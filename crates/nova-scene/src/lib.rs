@@ -325,4 +325,42 @@ mod tests {
         let _ = std::fs::remove_file(ron_path);
         let _ = std::fs::remove_file(json_path);
     }
+
+    #[test]
+    fn migrates_older_version_forward_to_current() {
+        let (world, _p, _c) = sample_world();
+        let mut scene = dump_world(&world);
+        assert_eq!(scene.version, CURRENT_SCENE_VERSION);
+        // Pretend this file was written by an older build.
+        scene.version = CURRENT_SCENE_VERSION - 1;
+        let text = to_string(&scene, SceneFormat::Ron).unwrap();
+
+        let parsed = from_str(&text, SceneFormat::Ron).unwrap();
+        assert_eq!(parsed.version, CURRENT_SCENE_VERSION - 1);
+
+        let restored = load_world(parsed).unwrap();
+        assert_eq!(restored.entity_count(), 2);
+        assert!(restored.query_1::<Mesh>().len() == 1);
+    }
+
+    #[test]
+    fn corrupt_json_scene_is_rejected() {
+        let err = from_str("{ this is not valid json", SceneFormat::Json);
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn corrupt_ron_scene_is_rejected() {
+        let err = from_str("SceneFile(version: 1, entities: (", SceneFormat::Ron);
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn unknown_extension_is_rejected() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("nova_scene_test.txt");
+        let (world, _p, _c) = sample_world();
+        let err = save_to_file(&world, &path);
+        assert!(matches!(err, Err(SceneError::UnknownExtension)));
+    }
 }

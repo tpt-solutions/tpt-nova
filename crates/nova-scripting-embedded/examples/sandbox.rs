@@ -3,14 +3,15 @@
 //! Run with `cargo run -p nova-scripting-embedded --example sandbox`.
 
 use nova_ecs::World;
-use nova_scripting_embedded::{Capabilities, Capability, EmbeddedRuntime, ScriptCommand};
+use nova_scripting_embedded::{Capabilities, Capability, EmbeddedRuntime};
 
 fn main() {
-    // An AI-generated script is only trusted with spawn + write + log.
+    // An AI-generated script is only trusted with spawn + write + log + net.
     let caps = Capabilities::none()
-        .grant(nova_scripting_embedded::Capability::Spawn)
-        .grant(nova_scripting_embedded::Capability::WriteWorld)
-        .grant(nova_scripting_embedded::Capability::Log)
+        .grant(Capability::Spawn)
+        .grant(Capability::WriteWorld)
+        .grant(Capability::Log)
+        .grant(Capability::Net)
         .clone();
 
     let mut rt = EmbeddedRuntime::new(caps);
@@ -32,8 +33,6 @@ fn main() {
         }
         Err(e) => {
             println!("script rejected by sandbox: {e}");
-            // Inspect what was safely queued before the error.
-            let _ = ScriptCommand::Log("".into()); // keep import used
         }
     }
 

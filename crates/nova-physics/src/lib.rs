@@ -335,4 +335,67 @@ mod tests {
         step_physics(&mut world, 1.0 / 60.0);
         assert_eq!(world.resource::<PhysicsWorld>().unwrap().body_count(), 0);
     }
+
+    #[test]
+    fn kinematic_component_velocity_drives_transform() {
+        // The component's linvel must round-trip into the physics body and back
+        // out as a moved Transform (component -> body -> ECS).
+        let mut world = World::new();
+        world.add_resource(PhysicsWorld::default());
+        let e = world.spawn();
+        world.add_component(e, Transform::from_translation(Vec3::ZERO));
+        world.add_component(e, RigidBody2D::kinematic().with_linvel(Vec2::new(2.0, 0.0)));
+
+        let x0 = world.get_component::<Transform>(e).unwrap().translation.x;
+        step_physics(&mut world, 0.5);
+        let x1 = world.get_component::<Transform>(e).unwrap().translation.x;
+        // Kinematic velocity-based body integrates position by linvel * dt.
+        assert!(
+            (x1 - x0 - 1.0).abs() < 1e-3,
+            "expected ~1.0 of travel, got {}",
+            x1 - x0
+        );
+    }
+
+    #[test]
+    fn dynamic_body_velocity_syncs_back_to_component() {
+        // After a step, the body's velocity is read back into the RigidBody2D
+        // component (body -> component round-trip), so gravity changes it.
+        let mut world = World::new();
+        world.add_resource(PhysicsWorld::default());
+        let e = world.spawn();
+        world.add_component(e, Transform::from_translation(Vec3::new(0.0, 10.0, 0.0)));
+        let mut rb = RigidBody2D::dynamic();
+        rb.linvel = Vec2::new(0.0, 5.0);
+        world.add_component(e, rb);
+        world.add_component(e, Collider2D::new(ColliderShape::ball(0.5)));
+
+        step_physics(&mut world, 1.0 / 60.0);
+        let v = world.get_component::<RigidBody2D>(e).unwrap().linvel;
+        // Gravity (-9.81) over 1/60s should have lowered the upward velocity.
+        assert!(v.y < 5.0, "gravity should have reduced upward velocity");
+        assert!(v.y > 4.5, "but only slightly, got {}", v.y);
+    }
+
+    #[test]
+    fn simulation_is_deterministic_for_identical_setup() {
+        fn scenario() -> Vec3 {
+            let mut world = World::new();
+            world.add_resource(PhysicsWorld::default());
+            let e = world.spawn();
+            world.add_component(e, Transform::from_translation(Vec3::new(0.0, 10.0, 0.0)));
+            world.add_component(e, RigidBody2D::dynamic());
+            world.add_component(e, Collider2D::new(ColliderShape::ball(0.5)));
+            for _ in 0..120 {
+                step_physics(&mut world, 1.0 / 60.0);
+            }
+            world.get_component::<Transform>(e).unwrap().translation
+        }
+        let a = scenario();
+        let b = scenario();
+        assert_eq!(
+            a, b,
+            "two identical simulations must produce identical state (determinism regression)"
+        );
+    }
 }
