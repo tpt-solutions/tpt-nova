@@ -45,7 +45,12 @@ fn main() {
     let (mut world, vp, size) = camera_view_proj();
     let e = world.spawn();
     world.add_component(e, Transform::from_translation(Vec3::ZERO));
-    world.add_component(e, Mesh { kind: MeshKind::Cube });
+    world.add_component(
+        e,
+        Mesh {
+            kind: MeshKind::Cube,
+        },
+    );
     world.add_component(e, GlobalTransform::identity());
 
     let mut tool = SelectionTool::new();

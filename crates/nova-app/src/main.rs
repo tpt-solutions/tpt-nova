@@ -233,11 +233,7 @@ impl App {
     fn camera_matrices(&self) -> Option<(Mat4, Mat4, Vec3)> {
         let aspect = self.viewport_size.0 as f32 / self.viewport_size.1.max(1) as f32;
         let mut found = None;
-        for (_e, cam, gt) in self
-            .world
-            .query_2::<Camera, GlobalTransform>()
-            .into_iter()
-        {
+        for (_e, cam, gt) in self.world.query_2::<Camera, GlobalTransform>().into_iter() {
             let mut proj = *cam;
             proj.aspect = aspect;
             let view = gt.0.inverse();
@@ -258,9 +254,7 @@ impl App {
             .query_2::<Transform, GlobalTransform>()
             .into_iter()
         {
-            if let Some((sx, sy)) =
-                project_to_screen(gt.translation(), vp, self.viewport_size)
-            {
+            if let Some((sx, sy)) = project_to_screen(gt.translation(), vp, self.viewport_size) {
                 let d = ((sx as f32 - self.pointer.x).powi(2)
                     + (sy as f32 - self.pointer.y).powi(2))
                 .sqrt();
@@ -340,7 +334,7 @@ impl App {
         // Continuous gizmo drag: apply the live delta every frame the button is
         // held over the selection.
         if let Some((start, entity)) = self.gizmo_drag {
-                if let Some((_vp, inv_vp, forward)) = self.camera_matrices() {
+            if let Some((_vp, inv_vp, forward)) = self.camera_matrices() {
                 let size = self.viewport_size;
                 nova_editor::apply_gizmo_3d(
                     &mut self.world,
@@ -392,8 +386,18 @@ impl App {
         draw.extend(self.build_toolbar(layout.toolbar, input));
 
         // ---- Hierarchy / inspector / asset panels (self-handling) ---------
-        draw.extend(hierarchy_panel(&self.world, &mut self.editor, input, layout.hierarchy));
-        draw.extend(inspector_panel(&mut self.world, &mut self.editor, input, layout.inspector));
+        draw.extend(hierarchy_panel(
+            &self.world,
+            &mut self.editor,
+            input,
+            layout.hierarchy,
+        ));
+        draw.extend(inspector_panel(
+            &mut self.world,
+            &mut self.editor,
+            input,
+            layout.inspector,
+        ));
         draw.extend(asset_browser_panel(&mut self.editor, input, layout.assets));
 
         // ---- Gizmo handles for the current selection ----------------------
@@ -438,7 +442,11 @@ impl App {
         self.world
             .get_component::<GlobalTransform>(entity)
             .map(|gt| gt.translation())
-            .or_else(|| self.world.get_component::<Transform>(entity).map(|t| t.translation))
+            .or_else(|| {
+                self.world
+                    .get_component::<Transform>(entity)
+                    .map(|t| t.translation)
+            })
             .unwrap_or(Vec3::ZERO)
     }
 
@@ -543,9 +551,9 @@ impl App {
             let (x, y) = (self.pointer.x as u32, self.pointer.y as u32);
             self.overlay.drag(x, y);
             if let Some((vp, _, _)) = self.camera_matrices() {
-                if let Ok(req) = self
-                    .overlay
-                    .build_request(&self.world, vp, self.viewport_size, "fix selection")
+                if let Ok(req) =
+                    self.overlay
+                        .build_request(&self.world, vp, self.viewport_size, "fix selection")
                 {
                     log::info!("Highlight & Fix request:\n{}", req.prompt);
                     self.last_fix = Some(req);
@@ -726,7 +734,10 @@ impl ApplicationHandler for App {
             WinitWindowEvent::RedrawRequested => {
                 self.render_frame();
             }
-            WinitWindowEvent::KeyboardInput { event: ref key_event, .. } => {
+            WinitWindowEvent::KeyboardInput {
+                event: ref key_event,
+                ..
+            } => {
                 if let Some(input) = self.world.resource_mut::<InputState>() {
                     input.apply_event(&event);
                 }

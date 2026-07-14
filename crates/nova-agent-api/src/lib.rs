@@ -593,7 +593,7 @@ mod tests {
         let mut ch = ControlChannel::new(&path);
         // A control file with more than the per-poll cap must be rejected rather
         // than flooding the world with spawns.
-        let cmds: Vec<AgentCommand> = (0..(10_001))
+        let cmds: Vec<AgentCommand> = (0..10_001)
             .map(|_| AgentCommand::Spawn {
                 name: None,
                 translation: [0.0, 0.0, 0.0],
