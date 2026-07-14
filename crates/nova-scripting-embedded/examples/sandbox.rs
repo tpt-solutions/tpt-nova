@@ -36,7 +36,7 @@ fn main() {
     }
 
     // A script that exceeds its capabilities is simply rejected at compile time.
-    let mut denied_rt = EmbeddedRuntime::new(Capabilities::none().grant(Capability::Log).clone());
+    let mut denied_rt = EmbeddedRuntime::new(*Capabilities::none().grant(Capability::Log));
     let mut other_world = World::new();
     let err = denied_rt
         .run_and_apply("spawn_entity();", &mut other_world)

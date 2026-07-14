@@ -388,10 +388,9 @@ mod tests {
 
     #[test]
     fn capabilities_serialize_round_trip() {
-        let caps = Capabilities::none()
-            .grant(Capability::Spawn)
-            .grant(Capability::Log)
-            .clone();
+        let mut caps = Capabilities::none();
+        caps.grant(Capability::Spawn);
+        caps.grant(Capability::Log);
         let json = serde_json::to_string(&caps).unwrap();
         let back: Capabilities = serde_json::from_str(&json).unwrap();
         assert!(back.can(Capability::Spawn));
@@ -432,7 +431,8 @@ mod tests {
 
     #[test]
     fn log_only_cannot_spawn() {
-        let caps = Capabilities::none().grant(Capability::Log).clone();
+        let mut caps = Capabilities::none();
+        caps.grant(Capability::Log);
         let mut rt = EmbeddedRuntime::new(caps);
         let mut world = World::new();
         rt.run_and_apply(r#"log("hello from sandbox"); spawn_entity();"#, &mut world)
@@ -461,11 +461,10 @@ mod tests {
     fn emit_event_requires_net_capability() {
         // emit_event is a network/telemetry trigger, so it must be gated by Net,
         // not by WriteWorld.
-        let caps = Capabilities::none()
-            .grant(Capability::Spawn)
-            .grant(Capability::WriteWorld)
-            .grant(Capability::Log)
-            .clone();
+        let mut caps = Capabilities::none();
+        caps.grant(Capability::Spawn);
+        caps.grant(Capability::WriteWorld);
+        caps.grant(Capability::Log);
         let mut rt = EmbeddedRuntime::new(caps);
         let mut world = World::new();
         let err = rt
@@ -498,7 +497,8 @@ mod tests {
     #[test]
     fn write_world_denied_blocks_set_transform() {
         // Spawn is allowed but WriteWorld is not, so set_transform must not exist.
-        let caps = Capabilities::none().grant(Capability::Spawn).clone();
+        let mut caps = Capabilities::none();
+        caps.grant(Capability::Spawn);
         let mut rt = EmbeddedRuntime::new(caps);
         let mut world = World::new();
         let err = rt

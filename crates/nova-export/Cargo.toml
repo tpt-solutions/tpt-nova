@@ -1,0 +1,16 @@
+[package]
+name = "nova-export"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Standalone packaging + asset bundling for TPT Nova games"
+
+[[bin]]
+name = "nova-export"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"

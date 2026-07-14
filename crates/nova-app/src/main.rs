@@ -59,6 +59,7 @@ struct App {
     last_time: Instant,
     accumulator: f32,
     control_mtime: Option<u64>,
+    #[allow(dead_code)]
     telemetry_path: PathBuf,
     control_path: String,
 }
@@ -106,7 +107,10 @@ impl App {
             renderer: None,
             world,
             scheduler,
-            emitter: TelemetryEmitter::new(FileSink::new(telemetry_path.clone()), TELEMETRY_INTERVAL),
+            emitter: TelemetryEmitter::new(
+                FileSink::new(telemetry_path.clone()),
+                TELEMETRY_INTERVAL,
+            ),
             cube,
             camera,
             last_time: Instant::now(),
@@ -127,7 +131,12 @@ impl App {
 
     fn step(&mut self) {
         // External control override (hot-apply without restart).
-        apply_control(&mut self.world, self.cube, &mut self.control_mtime, &self.control_path);
+        apply_control(
+            &mut self.world,
+            self.cube,
+            &mut self.control_mtime,
+            &self.control_path,
+        );
 
         self.scheduler.run(&mut self.world);
 
@@ -221,12 +230,7 @@ fn movement_system(world: &mut World, cube: Entity) {
     }
 }
 
-fn apply_control(
-    world: &mut World,
-    cube: Entity,
-    last_mtime: &mut Option<u64>,
-    path: &str,
-) {
+fn apply_control(world: &mut World, cube: Entity, last_mtime: &mut Option<u64>, path: &str) {
     let meta = match std::fs::metadata(path) {
         Ok(m) => m,
         Err(_) => return,
@@ -466,15 +470,16 @@ mod tests {
         let _ = std::fs::remove_file(&control);
         let _ = std::fs::remove_file(&telemetry);
 
-        let mut app = App::new_with_paths(
-            1,
-            telemetry.clone(),
-            control.to_string_lossy().to_string(),
-        );
+        let mut app =
+            App::new_with_paths(1, telemetry.clone(), control.to_string_lossy().to_string());
 
         // No control file yet -> cube stays at identity rotation.
         app.step();
-        let before = app.world.get_component::<Transform>(app.cube).unwrap().rotation;
+        let before = app
+            .world
+            .get_component::<Transform>(app.cube)
+            .unwrap()
+            .rotation;
         assert_eq!(before, Quat::IDENTITY);
 
         // External agent writes a control file asking for a specific rotation.
@@ -488,7 +493,11 @@ mod tests {
         std::thread::sleep(Duration::from_millis(20));
 
         app.step();
-        let applied = app.world.get_component::<Transform>(app.cube).unwrap().rotation;
+        let applied = app
+            .world
+            .get_component::<Transform>(app.cube)
+            .unwrap()
+            .rotation;
         assert!(
             (applied - want).length() < 1e-4,
             "rotation should be hot-applied: {applied:?} vs {want:?}"
@@ -497,7 +506,11 @@ mod tests {
         // Stepping again without rewriting the control file must NOT re-apply
         // (the loop is idempotent between writes), guarding against resets.
         app.step();
-        let still = app.world.get_component::<Transform>(app.cube).unwrap().rotation;
+        let still = app
+            .world
+            .get_component::<Transform>(app.cube)
+            .unwrap()
+            .rotation;
         assert!(
             (still - want).length() < 1e-4,
             "should remain stable when control is unchanged"
@@ -512,7 +525,11 @@ mod tests {
         .unwrap();
         std::thread::sleep(Duration::from_millis(20));
         app.step();
-        let applied2 = app.world.get_component::<Transform>(app.cube).unwrap().rotation;
+        let applied2 = app
+            .world
+            .get_component::<Transform>(app.cube)
+            .unwrap()
+            .rotation;
         assert!(
             (applied2 - want2).length() < 1e-4,
             "rotation should re-hot-apply on a new write"
@@ -544,8 +561,12 @@ mod tests {
         // The cube (and camera) must appear in the emitted entity dump.
         let entities = frame["entities"].as_array().unwrap();
         assert!(entities.len() >= 2, "expected cube + camera entities");
-        assert!(entities.iter().any(|e| e["components"].get("Mesh").is_some()));
-        assert!(entities.iter().any(|e| e["components"].get("Camera").is_some()));
+        assert!(entities
+            .iter()
+            .any(|e| e["components"].get("Mesh").is_some()));
+        assert!(entities
+            .iter()
+            .any(|e| e["components"].get("Camera").is_some()));
 
         let _ = std::fs::remove_file(&telemetry);
     }

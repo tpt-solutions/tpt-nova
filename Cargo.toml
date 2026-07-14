@@ -17,6 +17,13 @@ members = [
     "crates/nova-app",
     "crates/nova-neural-materials",
     "crates/nova-scripting-embedded",
+    "crates/nova-splat",
+    "crates/nova-rag",
+    "crates/nova-export",
+    "crates/nova-agent-api",
+    "crates/nova-overlay",
+    "crates/nova-videocap",
+    "crates/nova-sample-game",
 ]
 
 [workspace.package]
@@ -39,3 +46,10 @@ nova-anim = { path = "crates/nova-anim" }
 nova-ingest = { path = "crates/nova-ingest" }
 nova-neural-materials = { path = "crates/nova-neural-materials" }
 nova-scripting-embedded = { path = "crates/nova-scripting-embedded" }
+nova-splat = { path = "crates/nova-splat" }
+nova-rag = { path = "crates/nova-rag" }
+nova-export = { path = "crates/nova-export" }
+nova-agent-api = { path = "crates/nova-agent-api" }
+nova-overlay = { path = "crates/nova-overlay" }
+nova-videocap = { path = "crates/nova-videocap" }
+nova-sample-game = { path = "crates/nova-sample-game" }

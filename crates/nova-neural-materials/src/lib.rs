@@ -41,7 +41,7 @@ mod tests {
     use crate::source::StaticImageSource;
 
     fn solid(width: u32, height: u32, r: u8, g: u8, b: u8) -> Frame {
-        let rgba = vec![r, g, b, 255].repeat(width as usize * height as usize);
+        let rgba = [r, g, b, 255].repeat(width as usize * height as usize);
         Frame::new(width, height, rgba, 0).unwrap()
     }
 

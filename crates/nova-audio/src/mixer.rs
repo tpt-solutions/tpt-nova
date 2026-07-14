@@ -84,7 +84,9 @@ impl Mixer {
         let att = spatial_attenuation(listener, source, p);
         let pan = spatial_pan(listener, source);
         let theta = (pan + 1.0) * 0.5 * std::f32::consts::FRAC_PI_2;
-        let (l, r) = (theta.cos(), theta.sin());
+        // Equal-power pan over [-1, 1]; clamp so f32 rounding of `cos(π/2)`
+        // can't produce a (tiny) negative channel gain.
+        let (l, r) = (theta.cos().max(0.0), theta.sin().max(0.0));
         let g = att * self.gain(bus, sound_volume);
         [g * l, g * r]
     }
@@ -196,7 +198,7 @@ pub fn spatial_attenuation(listener: &Listener, source: Vec3, p: &SpatialParams)
         return 0.0;
     }
     let t = (max_d - d) / (max_d - ref_d);
-    t.max(0.0).min(1.0).powf(p.rolloff.max(0.0))
+    t.clamp(0.0, 1.0).powf(p.rolloff.max(0.0))
 }
 
 /// Stereo pan in `[-1,1]` for `source` relative to the listener: `+1` = hard
@@ -294,18 +296,26 @@ mod tests {
         let p = SpatialParams::default();
         let near = spatial_attenuation(&l, [5.0, 0.0, 0.0], &p);
         let far = spatial_attenuation(&l, [20.0, 0.0, 0.0], &p);
-        assert!(far < near, "farther source must be quieter: {near} vs {far}");
+        assert!(
+            far < near,
+            "farther source must be quieter: {near} vs {far}"
+        );
         assert!(near > 0.0 && far > 0.0);
     }
 
     #[test]
     fn rolloff_steepens_the_falloff() {
         let l = Listener::default();
-        let mut p = SpatialParams::default();
-        p.rolloff = 1.0;
-        let linear = spatial_attenuation(&l, [25.0, 0.0, 0.0], &p);
-        p.rolloff = 3.0;
-        let steep = spatial_attenuation(&l, [25.0, 0.0, 0.0], &p);
+        let p1 = SpatialParams {
+            rolloff: 1.0,
+            ..Default::default()
+        };
+        let linear = spatial_attenuation(&l, [25.0, 0.0, 0.0], &p1);
+        let p2 = SpatialParams {
+            rolloff: 3.0,
+            ..Default::default()
+        };
+        let steep = spatial_attenuation(&l, [25.0, 0.0, 0.0], &p2);
         assert!(steep < linear, "higher rolloff should attenuate more");
     }
 
@@ -326,25 +336,13 @@ mod tests {
         m.set_master(0.5);
         let p = SpatialParams::default();
         // Source dead ahead at the listener (full att, center pan).
-        let [l, r] = m.spatial_gain(
-            &Listener::default(),
-            [0.0, 0.0, 0.0],
-            &p,
-            Bus::Sfx,
-            1.0,
-        );
+        let [l, r] = m.spatial_gain(&Listener::default(), [0.0, 0.0, 0.0], &p, Bus::Sfx, 1.0);
         // Equal-power center: each channel ~0.707 * master(0.5) * att(1).
         assert!((l - 0.5 * std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-4);
         assert!((r - 0.5 * std::f32::consts::FRAC_1_SQRT_2).abs() < 1e-4);
 
         // A far source behind the listener is silent.
-        let [fl, fr] = m.spatial_gain(
-            &Listener::default(),
-            [0.0, 0.0, 100.0],
-            &p,
-            Bus::Sfx,
-            1.0,
-        );
+        let [fl, fr] = m.spatial_gain(&Listener::default(), [0.0, 0.0, 100.0], &p, Bus::Sfx, 1.0);
         assert_eq!(fl, 0.0);
         assert_eq!(fr, 0.0);
     }

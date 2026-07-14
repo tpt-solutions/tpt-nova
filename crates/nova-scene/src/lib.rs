@@ -15,8 +15,10 @@
 //! changes are backward compatible without a migration; migrations exist for
 //! renames/removals/semantic changes.
 
+use std::collections::HashSet;
 use std::path::Path;
 
+use nova_ecs::light::Light;
 use nova_ecs::scene_graph::{Children, Parent};
 use nova_ecs::transform::{Camera, GlobalTransform, Mesh, Transform};
 use nova_ecs::{Entity, World};
@@ -24,7 +26,7 @@ use nova_physics::{Collider2D, RigidBody2D};
 use serde::{Deserialize, Serialize};
 
 /// The scene schema version this build reads and writes.
-pub const CURRENT_SCENE_VERSION: u32 = 1;
+pub const CURRENT_SCENE_VERSION: u32 = 2;
 
 /// Errors raised while loading a scene.
 #[derive(Debug, thiserror::Error)]
@@ -41,6 +43,8 @@ pub enum SceneError {
     Io(#[from] std::io::Error),
     #[error("unknown scene file extension (expected .ron or .json)")]
     UnknownExtension,
+    #[error("scene failed validation: {0}")]
+    Validation(String),
 }
 
 /// A complete, versioned snapshot of an ECS world.
@@ -67,6 +71,10 @@ pub struct EntityRecord {
     pub rigid_body: Option<RigidBody2D>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub collider: Option<Collider2D>,
+    /// A light attached to this entity (v2+; absent in v1 files and added by
+    /// the v1→v2 migration for camera entities).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub light: Option<Light>,
     /// Parent entity, by original id.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent: Option<u32>,
@@ -103,6 +111,7 @@ pub fn dump_world(world: &World) -> SceneFile {
             camera: world.get_component::<Camera>(e).copied(),
             rigid_body: world.get_component::<RigidBody2D>(e).copied(),
             collider: world.get_component::<Collider2D>(e).copied(),
+            light: world.get_component::<Light>(e).copied(),
             parent,
             children,
         });
@@ -123,6 +132,9 @@ pub fn dump_world(world: &World) -> SceneFile {
 /// references to freshly-allocated handles.
 pub fn load_world(mut scene: SceneFile) -> Result<World, SceneError> {
     migrate(&mut scene)?;
+    // Structural integrity: reject scenes with duplicate ids or dangling
+    // parent/child links before we ever try to instantiate them.
+    validate(&scene)?;
 
     let mut world = World::new();
     let mut remap: std::collections::HashMap<u32, Entity> = std::collections::HashMap::new();
@@ -153,6 +165,9 @@ pub fn load_world(mut scene: SceneFile) -> Result<World, SceneError> {
         if let Some(col) = record.collider {
             world.add_component(e, col);
         }
+        if let Some(l) = record.light {
+            world.add_component(e, l);
+        }
         if let Some(pid) = record.parent {
             if let Some(&pe) = remap.get(&pid) {
                 world.add_component(e, Parent(pe));
@@ -174,8 +189,9 @@ pub fn load_world(mut scene: SceneFile) -> Result<World, SceneError> {
 /// Upgrade a scene loaded from an older schema version to
 /// [`CURRENT_SCENE_VERSION`], in place.
 ///
-/// Add a match arm per version bump. Each arm mutates `scene` from version `N`
-/// to `N + 1` and updates `scene.version`.
+/// Each loop iteration applies the migration for the scene's *current* version
+/// (mutating component data), then bumps the version number. Add a new arm here
+/// whenever the schema changes so older saves keep loading.
 pub fn migrate(scene: &mut SceneFile) -> Result<(), SceneError> {
     if scene.version > CURRENT_SCENE_VERSION {
         return Err(SceneError::UnsupportedVersion {
@@ -184,10 +200,64 @@ pub fn migrate(scene: &mut SceneFile) -> Result<(), SceneError> {
         });
     }
     while scene.version < CURRENT_SCENE_VERSION {
-        // Apply per-version migrations here as they are introduced, e.g.:
-        //   if scene.version == 1 { migrate_v1_to_v2(scene); }
-        // Versions without schema changes simply bump forward.
+        if scene.version == 1 {
+            migrate_v1_to_v2(scene);
+        }
+        // Future version bumps add their own `if scene.version == N` arm here.
         scene.version += 1;
+    }
+    Ok(())
+}
+
+/// v1→v2 schema migration.
+///
+/// Version 2 introduces an explicit [`Light`] component. In v1 a camera implied
+/// the scene was lit by a default sun; to preserve that behavior after the split
+/// we attach a default directional light to every entity that carried a camera.
+/// Entities without a camera are left dark (as before) — the upgrade is purely
+/// additive and lossless for v1 data.
+fn migrate_v1_to_v2(scene: &mut SceneFile) {
+    for record in &mut scene.entities {
+        if record.camera.is_some() {
+            record.light.get_or_insert_with(Light::default);
+        }
+    }
+}
+
+/// Structural validation of a scene graph before instantiation.
+///
+/// Catches the corruptions that raw deserialization can't: duplicated entity
+/// ids and parent/child references that point at entities not present in the
+/// file. A scene that fails validation would otherwise panic or build a broken
+/// world, so we surface it as a [`SceneError::Validation`] instead.
+pub fn validate(scene: &SceneFile) -> Result<(), SceneError> {
+    let mut seen = HashSet::new();
+    for r in &scene.entities {
+        if !seen.insert(r.id) {
+            return Err(SceneError::Validation(format!(
+                "duplicate entity id {}",
+                r.id
+            )));
+        }
+    }
+    let ids: HashSet<u32> = scene.entities.iter().map(|r| r.id).collect();
+    for r in &scene.entities {
+        if let Some(p) = r.parent {
+            if !ids.contains(&p) {
+                return Err(SceneError::Validation(format!(
+                    "entity {} references missing parent {}",
+                    r.id, p
+                )));
+            }
+        }
+        for c in &r.children {
+            if !ids.contains(c) {
+                return Err(SceneError::Validation(format!(
+                    "entity {} references missing child {}",
+                    r.id, c
+                )));
+            }
+        }
     }
     Ok(())
 }
@@ -243,7 +313,7 @@ pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<World, SceneError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nova_ecs::transform::MeshKind;
+    use nova_ecs::transform::{Camera, MeshKind};
     use nova_ecs::Vec3;
     use nova_physics::ColliderShape;
 
@@ -362,5 +432,65 @@ mod tests {
         let (world, _p, _c) = sample_world();
         let err = save_to_file(&world, &path);
         assert!(matches!(err, Err(SceneError::UnknownExtension)));
+    }
+
+    #[test]
+    fn v1_scene_migrates_camera_to_light() {
+        // A v1 file has a camera but no explicit light. The v1->v2 migration
+        // must attach a default directional Light to camera entities so the
+        // upgraded scene stays lit.
+        let mut world = World::new();
+        let cam = world.spawn();
+        world.add_component(cam, Transform::default());
+        world.add_component(cam, Camera::default());
+        let mut scene = dump_world(&world);
+        scene.version = 1; // pretend an older build wrote this
+        let text = to_string(&scene, SceneFormat::Ron).unwrap();
+        let restored = load_world(from_str(&text, SceneFormat::Ron).unwrap()).unwrap();
+        let cams = restored.query_1::<Camera>();
+        assert_eq!(cams.len(), 1);
+        assert!(
+            restored.get_component::<Light>(cams[0].0).is_some(),
+            "v1->v2 migration should add a Light to camera entities"
+        );
+    }
+
+    #[test]
+    fn valid_scene_passes_validation() {
+        let (world, _p, _c) = sample_world();
+        assert!(validate(&dump_world(&world)).is_ok());
+    }
+
+    #[test]
+    fn duplicate_entity_ids_are_rejected() {
+        let scene = SceneFile {
+            version: CURRENT_SCENE_VERSION,
+            entities: vec![
+                EntityRecord {
+                    id: 1,
+                    ..Default::default()
+                },
+                EntityRecord {
+                    id: 1,
+                    ..Default::default()
+                },
+            ],
+        };
+        assert!(matches!(validate(&scene), Err(SceneError::Validation(_))));
+        assert!(matches!(load_world(scene), Err(SceneError::Validation(_))));
+    }
+
+    #[test]
+    fn dangling_parent_reference_is_rejected() {
+        let scene = SceneFile {
+            version: CURRENT_SCENE_VERSION,
+            entities: vec![EntityRecord {
+                id: 1,
+                parent: Some(99),
+                ..Default::default()
+            }],
+        };
+        assert!(matches!(validate(&scene), Err(SceneError::Validation(_))));
+        assert!(matches!(load_world(scene), Err(SceneError::Validation(_))));
     }
 }

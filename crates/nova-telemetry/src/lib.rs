@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// Top-level telemetry payload emitted each interval.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TelemetryFrame {
     pub schema_version: u32,
     pub tick: u64,
@@ -26,7 +26,7 @@ pub struct TelemetryFrame {
 }
 
 /// One entity's dumpable components.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EntityDump {
     pub id: String,
     pub components: HashMap<String, Value>,

@@ -508,8 +508,10 @@ mod tests {
 
     #[test]
     fn identity_camera_view_proj_equals_perspective() {
-        let mut cam = Camera::default();
-        cam.aspect = 1.6;
+        let cam = Camera {
+            aspect: 1.6,
+            ..Default::default()
+        };
         let expected = cam.perspective();
         let vp = compute_view_proj(&Camera::default(), &GlobalTransform::identity(), 1.6);
         assert!(

@@ -1,16 +1,13 @@
 [package]
-name = "nova-physics"
+name = "nova-overlay"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Rapier2D physics integration for TPT Nova's ECS (components + deterministic sync step)"
+description = "Highlight & Fix viewport overlay tooling for TPT Nova: select a screen region and generate an AI fix prompt"
 
 [dependencies]
 nova-ecs = { workspace = true }
 glam = { version = "0.29", features = ["std", "serde"] }
 serde = { version = "1", features = ["derive"] }
-rapier2d = "0.34"
-
-[dev-dependencies]
-nova-telemetry = { path = "../nova-telemetry" }
+thiserror = "1"

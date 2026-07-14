@@ -33,11 +33,27 @@ fn dylib_file_name(stem: &str) -> String {
 }
 
 /// `.../target/<profile>/deps/<test-exe>` -> `.../target/<profile>/<dylib>`
+///
+/// The gameplay `cdylib` can exist both at the crate's primary artifact path
+/// (`target/<profile>/<name>.dll`) and in `target/<profile>/deps/`; cargo does
+/// not always keep the two copies' mtimes in sync, so a stale primary copy can
+/// linger. To always exercise the *current* build we consider both locations
+/// and return the most recently modified match.
 fn find_example_cdylib() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
-    let profile_dir = exe.parent()?.parent()?; // deps -> profile
-    let candidate = profile_dir.join(dylib_file_name("nova_gameplay_example"));
-    candidate.exists().then_some(candidate)
+    let profile_dir = exe.parent()?.parent()?.to_path_buf(); // deps -> profile
+    let name = dylib_file_name("nova_gameplay_example");
+    let mut best: Option<(PathBuf, std::time::SystemTime)> = None;
+    for dir in [profile_dir.clone(), profile_dir.join("deps")] {
+        let candidate = dir.join(name.as_str());
+        if let Some(t) = candidate.metadata().ok().and_then(|m| m.modified().ok()) {
+            match &best {
+                Some((_, bt)) if *bt >= t => {}
+                _ => best = Some((candidate, t)),
+            }
+        }
+    }
+    best.map(|(p, _)| p)
 }
 
 /// Copy the example cdylib to a test-owned temp file so we can simulate a
@@ -50,7 +66,10 @@ fn stage_temp_copy() -> Option<PathBuf> {
         .duration_since(std::time::SystemTime::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let ext = original.extension().and_then(|e| e.to_str()).unwrap_or("mod");
+    let ext = original
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("mod");
     let work = std::env::temp_dir().join(format!("nova_reload_test_{nanos}.{ext}"));
     std::fs::copy(&original, &work).ok()?;
     Some(work)
@@ -82,13 +101,10 @@ fn c_abi_boundary_version_matches_host() {
 
 #[test]
 fn lifecycle_load_reload_unload() {
-    let path = match find_example_cdylib() {
-        Some(p) => p,
-        None => {
-            eprintln!("skipping: example cdylib not found next to test exe");
-            return;
-        }
-    };
+    if find_example_cdylib().is_none() {
+        eprintln!("skipping: example cdylib not found next to test exe");
+        return;
+    }
 
     let work = match stage_temp_copy() {
         Some(w) => w,
@@ -111,11 +127,30 @@ fn lifecycle_load_reload_unload() {
     // directly is rejected by the OS).
     std::thread::sleep(Duration::from_millis(20));
     let original = find_example_cdylib().expect("example cdylib present");
-    std::fs::copy(&original, &work).expect("refresh working copy");
-
-    let reloaded = module
-        .reload_if_changed(&mut world)
-        .expect("reload succeeds");
+    // Re-`write` (not `copy`) the bytes back so the working copy's modified time
+    // is bumped to *now*; `std::fs::copy` can preserve the source mtime on some
+    // platforms, which would make `reload_if_changed` see no change and skip the
+    // reload.
+    //
+    // Poll until the reload is observed: on a freshly-linked artifact the load
+    // time and the rewrite time can land inside the filesystem's mtime
+    // granularity, so a single touch can look unchanged. Re-touching and
+    // retrying (wall-clock advancing) makes detection immune to any timestamp
+    // resolution.
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    let mut reloaded = false;
+    while std::time::Instant::now() < deadline {
+        let bytes = std::fs::read(&original).expect("read example cdylib");
+        std::fs::write(&work, bytes).expect("refresh working copy");
+        if module
+            .reload_if_changed(&mut world)
+            .expect("reload succeeds")
+        {
+            reloaded = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
     assert!(reloaded, "expected a reload after touching the source file");
 
     // Still drivable after the swap, and dropping unloads instance+library.

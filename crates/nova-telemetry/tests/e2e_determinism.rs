@@ -49,7 +49,9 @@ fn physics_into_telemetry_is_deterministic_across_runs() {
     // The body must have actually fallen under gravity.
     let t = &a.entities[0].components;
     let translation = t.get("Transform").expect("transform present");
-    let y = translation["translation"]["y"].as_f64().expect("y value");
+    // `translation` is a JSON array `[x, y, z]`; index positionally (serde_json
+    // string-indexing an array yields Null).
+    let y = translation["translation"][1].as_f64().expect("y value");
     assert!(y < 9.0, "body should have fallen, y={y}");
 }
 

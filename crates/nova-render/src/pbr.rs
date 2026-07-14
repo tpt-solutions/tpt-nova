@@ -656,6 +656,7 @@ fn build_cube_pbr() -> (Vec<Vertex>, Vec<u16>) {
     (vertices, indices)
 }
 
+
 const PBR_SHADER: &str = r#"
 struct Globals {
     view_proj: mat4x4<f32>,
@@ -710,5 +711,51 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let ambient = 0.15;
     let color = globals.light_color.rgb * globals.params.x * (diff * shadow + ambient);
     return vec4<f32>(color, 1.0);
-}
+    }
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pbr_cube_has_correct_topology() {
+        let (vertices, indices) = build_cube_pbr();
+        // 6 faces * 4 verts, 6 faces * 2 tris * 3 indices.
+        assert_eq!(vertices.len(), 24);
+        assert_eq!(indices.len(), 36);
+        // Every index must reference a real vertex.
+        assert!(indices.iter().all(|&i| (i as usize) < vertices.len()));
+        // Each face's four verts must share the same outward normal.
+        for face in 0..6 {
+            let n0 = vertices[face * 4].normal;
+            for k in 1..4 {
+                assert_eq!(
+                    vertices[face * 4 + k].normal,
+                    n0,
+                    "face {face} normal mismatch"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn pbr_globals_roundtrip_through_bytemuck() {
+        // The uniform struct must be a flat, zeroable blob so it can be uploaded
+        // verbatim to the GPU.
+        let g = Globals {
+            view_proj: Mat4::IDENTITY.to_cols_array_2d(),
+            light_view_proj: Mat4::IDENTITY.to_cols_array_2d(),
+            model: Mat4::from_translation(Vec3::new(1.0, 2.0, 3.0)).to_cols_array_2d(),
+            camera_pos: [0.0, 0.0, 5.0, 0.0],
+            light_dir: [-0.4, 0.8, -0.3, 0.0],
+            light_color: [1.0, 1.0, 1.0, 0.0],
+            params: [1.0, 10.0, 0.0, 0.0],
+        };
+        let bytes = bytemuck::bytes_of(&g);
+        let back: &Globals = bytemuck::from_bytes(bytes);
+        assert_eq!(back.model, g.model);
+        assert_eq!(back.camera_pos, g.camera_pos);
+        assert_eq!(back.params, g.params);
+    }
+}

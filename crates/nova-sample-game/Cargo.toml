@@ -1,0 +1,15 @@
+[package]
+name = "nova-sample-game"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "End-to-end sample game demonstrating the full TPT Nova pipeline (ECS + physics + scene + agent API + splats + export)"
+
+[dependencies]
+nova-ecs = { workspace = true }
+nova-ingest = { workspace = true }
+nova-scene = { workspace = true }
+nova-agent-api = { workspace = true }
+nova-splat = { workspace = true }
+nova-export = { workspace = true }

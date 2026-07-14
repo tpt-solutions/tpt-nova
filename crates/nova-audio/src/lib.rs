@@ -153,8 +153,7 @@ impl AudioEngine {
             }
         };
         let (left_ear, right_ear) = listener.ear_positions(0.1);
-        let player =
-            SpatialPlayer::connect_new(device.mixer(), source, left_ear, right_ear);
+        let player = SpatialPlayer::connect_new(device.mixer(), source, left_ear, right_ear);
         player.append(decoded);
         // SpatialPlayer already attenuates by distance, so feed it the flat
         // master*bus*sound gain; the analytic `Mixer::spatial_gain` model is
@@ -255,7 +254,8 @@ impl AudioEngine {
             v.player.set_volume(self.mixer.gain(v.bus, v.volume));
         }
         for v in &self.spatial {
-            v.player.set_volume(self.mixer.gain(v.bus, v.volume).max(0.0));
+            v.player
+                .set_volume(self.mixer.gain(v.bus, v.volume).max(0.0));
         }
     }
 

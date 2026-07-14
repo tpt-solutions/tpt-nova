@@ -1,0 +1,28 @@
+[package]
+name = "nova-splat"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Gaussian Splat (3DGS) loading and collision proxy generation for TPT Nova"
+
+[dependencies]
+nova-ecs = { workspace = true }
+nova-ingest = { workspace = true }
+glam = { version = "0.29", features = ["std", "serde"] }
+serde = { version = "1", features = ["derive"] }
+thiserror = "1"
+parry3d = "0.29"
+
+# Optional GPU render pipeline. Kept behind a feature so the loader, data, and
+# collision-proxy logic stay testable on headless CI without a GPU/display.
+wgpu = { version = "30", optional = true }
+bytemuck = { version = "1", optional = true }
+
+[features]
+default = []
+# Enables the wgpu-backed splat render pipeline (`SplatPipeline`).
+render = ["dep:wgpu", "dep:bytemuck"]
+
+[dev-dependencies]
+nova-ecs = { workspace = true }
