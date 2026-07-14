@@ -293,6 +293,11 @@ pub struct ControlChannel {
 /// corrupt multi-gigabyte file from exhausting memory when polled.
 const MAX_CONTROL_FILE_BYTES: u64 = 1u64 << 20; // 1 MiB
 
+/// Maximum number of commands we will apply from a single control-file poll.
+/// Bounds the per-poll work so a hostile 1 MiB file (which can encode thousands
+/// of `Spawn` commands) cannot be used to flood the world with entities.
+const MAX_COMMANDS_PER_POLL: usize = 10_000;
+
 impl ControlChannel {
     pub fn new<P: AsRef<Path>>(path: P) -> Self {
         ControlChannel {
@@ -339,6 +344,12 @@ impl ControlChannel {
                 found: file.protocol,
                 supported: PROTOCOL_VERSION,
             });
+        }
+        if file.commands.len() > MAX_COMMANDS_PER_POLL {
+            return Err(AgentApiError::ControlParse(format!(
+                "control file has {} commands (max {MAX_COMMANDS_PER_POLL})",
+                file.commands.len()
+            )));
         }
         let n = file.commands.len() as u32;
         apply_commands(world, &file.commands)?;
@@ -570,6 +581,33 @@ mod tests {
         assert_eq!(ch.poll(&mut world).unwrap(), 1);
         assert_eq!(world.entity_count(), 0);
 
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn channel_rejects_too_many_commands() {
+        let dir = std::env::temp_dir();
+        let path = dir.join("nova_agent_api_count_test.json");
+        let _ = std::fs::remove_file(&path);
+        let mut world = World::new();
+        let mut ch = ControlChannel::new(&path);
+        // A control file with more than the per-poll cap must be rejected rather
+        // than flooding the world with spawns.
+        let cmds: Vec<AgentCommand> = (0..(10_001))
+            .map(|_| AgentCommand::Spawn {
+                name: None,
+                translation: [0.0, 0.0, 0.0],
+                mesh: None,
+            })
+            .collect();
+        let cf = ControlFile::new(cmds);
+        // Compact form (no pretty indentation) keeps the file under the 1 MiB
+        // size cap so the command-count cap — not the size cap — is what trips.
+        std::fs::write(&path, serde_json::to_string(&cf).unwrap()).unwrap();
+        std::thread::sleep(Duration::from_millis(20));
+        let err = ch.poll(&mut world);
+        assert!(matches!(err, Err(AgentApiError::ControlParse(_))));
+        assert_eq!(world.entity_count(), 0);
         let _ = std::fs::remove_file(&path);
     }
 

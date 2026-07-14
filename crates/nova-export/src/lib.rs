@@ -107,16 +107,34 @@ pub fn pack_to_file(entries: &[PackEntry], path: &Path) -> Result<(), PackError>
 }
 
 /// Reject entry names that could be used for path traversal when a consumer
-/// writes a pack out to disk by name (absolute paths or `..` segments). Pack
-/// names are forward-slash separated and relative to the install root, so any
-/// name escaping that root is malformed.
+/// writes a pack out to disk by name. Pack names are forward-slash separated
+/// and relative to the install root, so any name escaping that root — via
+/// absolute paths, `..` segments, or backslashes (which Windows treats as path
+/// separators and which would otherwise slip past a `/`-only split) — is
+/// malformed.
 fn validate_entry_name(name: &str) -> Result<(), PackError> {
-    if name.is_empty() || name.starts_with('/') || name.starts_with('\\') {
+    if name.is_empty() {
         return Err(PackError::Malformed {
-            detail: format!("illegal entry name: {name:?}"),
+            detail: "empty entry name".into(),
         });
     }
-    if name.split('/').any(|seg| seg == "..") {
+    // The pack format is forward-slash only; a backslash would be interpreted as
+    // a path separator on Windows, so reject it outright rather than letting a
+    // `a\..\b` name bypass the `..` check below.
+    if name.contains('\\') {
+        return Err(PackError::Malformed {
+            detail: format!("backslash not allowed in entry name: {name:?}"),
+        });
+    }
+    if name.starts_with('/') {
+        return Err(PackError::Malformed {
+            detail: format!("absolute entry name: {name:?}"),
+        });
+    }
+    if name
+        .split('/')
+        .any(|seg| seg == ".." || seg.is_empty())
+    {
         return Err(PackError::Malformed {
             detail: format!("path traversal in entry name: {name:?}"),
         });
@@ -356,6 +374,41 @@ mod tests {
         buf.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
         buf.extend_from_slice(&1u32.to_le_bytes());
         let name = "../../etc/passwd";
+        buf.extend_from_slice(&(name.len() as u16).to_le_bytes());
+        buf.extend_from_slice(name.as_bytes());
+        buf.extend_from_slice(&0u64.to_le_bytes());
+        assert!(matches!(
+            unpack(&buf),
+            Err(PackError::Malformed { .. })
+        ));
+    }
+
+    #[test]
+    fn unpack_rejects_windows_backslash_traversal() {
+        // On Windows a backslash is a path separator, so a name like
+        // `sub\..\secret.txt` must be rejected even though it has no `/`.
+        let mut buf = Vec::new();
+        buf.extend_from_slice(MAGIC);
+        buf.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
+        buf.extend_from_slice(&1u32.to_le_bytes());
+        let name = "sub\\..\\secret.txt";
+        buf.extend_from_slice(&(name.len() as u16).to_le_bytes());
+        buf.extend_from_slice(name.as_bytes());
+        buf.extend_from_slice(&0u64.to_le_bytes());
+        assert!(matches!(
+            unpack(&buf),
+            Err(PackError::Malformed { .. })
+        ));
+    }
+
+    #[test]
+    fn unpack_rejects_empty_segment_names() {
+        // `a//b` (empty middle segment) and a leading slash are malformed.
+        let mut buf = Vec::new();
+        buf.extend_from_slice(MAGIC);
+        buf.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
+        buf.extend_from_slice(&1u32.to_le_bytes());
+        let name = "a//b";
         buf.extend_from_slice(&(name.len() as u16).to_le_bytes());
         buf.extend_from_slice(name.as_bytes());
         buf.extend_from_slice(&0u64.to_le_bytes());

@@ -191,39 +191,61 @@ tested logic layers with no GPU-rendered surface tying them into `nova-app`, so 
 engine has no interactive GUI usable by a human today. This phase tracks closing
 that gap plus onboarding and agent-loop follow-ups surfaced in the same review.
 ### UI/Editor backend (top priority)
-- [ ] Wire `nova-ui`'s `DrawList` into an actual render pass in `nova-render`/`nova-app`
+- [x] Wire `nova-ui`'s `DrawList` into an actual render pass in `nova-render`/`nova-app`
       (or adopt egui directly, per the already-resolved Open Decision) so the editor
       is visible/usable by a human, not just logic
-- [ ] Add editable inspector widgets (drag-float, checkbox, etc.) to `nova-editor` so
+- [x] Add editable inspector widgets (drag-float, checkbox, etc.) to `nova-editor` so
       the inspector panel can write component values, not just display them
-- [ ] Add a minimal viewport panel in `nova-app` that feeds pointer-drag deltas into
+- [x] Add a minimal viewport panel in `nova-app` that feeds pointer-drag deltas into
       the existing 2D/3D gizmo math, and draw on-screen gizmo handles
-- [ ] Add undo/redo and multi-select to `EditorState`
-- [ ] Add an asset browser panel and a play-in-editor toggle
-- [ ] Wire `nova-overlay`'s highlight-rectangle picking into an actual drawn/interactive
+- [x] Add undo/redo and multi-select to `EditorState`
+- [x] Add an asset browser panel and a play-in-editor toggle
+- [x] Wire `nova-overlay`'s highlight-rectangle picking into an actual drawn/interactive
       rectangle in the viewport (currently logic-only)
 ### Onboarding & adoption
-- [ ] Add a `GETTING_STARTED.md` (or expand README) walking clone -> build -> run
+- [x] Add a `GETTING_STARTED.md` (or expand README) walking clone -> build -> run
       `nova-app` and see a window; README quickstart currently never reaches a
       rendered frame
-- [ ] Ship 1-2 small sample assets (a cube `.glb`, a small `.splat`) so `ingest_demo`
+- [x] Ship 1-2 small sample assets (a cube `.glb`, a small `.splat`) so `ingest_demo`
       and splat ingestion are runnable zero-config
-- [ ] Reframe `nova-sample-game` explicitly as a forkable project template
+- [x] Reframe `nova-sample-game` explicitly as a forkable project template
       (doc/README note), not just a pipeline smoke test
-- [ ] Add `CONTRIBUTING.md` documenting the fmt/clippy/test gate already enforced in CI
+- [x] Add `CONTRIBUTING.md` documenting the fmt/clippy/test gate already enforced in CI
 ### Agent-loop / innovative differentiator
-- [ ] Close the agent-fix loop end-to-end: connect `nova-rag` (context) +
+- [x] Close the agent-fix loop end-to-end: connect `nova-rag` (context) +
       `nova-agent-api` (commands) + `nova-overlay` (highlight -> fix prompt) into one
       flagship example/demo
-- [ ] Replace `nova-rag`'s `FeatureHashEmbedder` placeholder with a real local
+- [x] Replace `nova-rag`'s `FeatureHashEmbedder` placeholder with a real local
       embedding model
 ### Bug-hunt / hardening
-- [ ] Run a dedicated code/security review pass over `nova-agent-api`,
+- [x] Run a dedicated code/security review pass over `nova-agent-api`,
       `nova-scripting-embedded`, and `nova-export` (untrusted-input surfaces: control
       files, scripts, `.novapack` archives) — the zero-TODO-marker sweep doesn't
       substitute for an actual bug audit
-- [ ] Promote the `cargo-tarpaulin` CI coverage job from informational
+- [x] Promote the `cargo-tarpaulin` CI coverage job from informational
       (`continue-on-error: true`) to a soft gate now that coverage work is complete
+
+## Phase 6 audit note (2026-07-15)
+The bulk of Phase 6 (editor render integration, editable widgets, gizmo viewport,
+undo/redo + multi-select, asset browser + play toggle, highlight-rectangle overlay,
+`GETTING_STARTED.md`, sample-game template reframe, `CONTRIBUTING.md`, the
+`agent_fix_loop` flagship demo, real local embeddings behind the `real-embeddings`
+feature, and the tarpaulin soft gate) was implemented in the preceding commit but the
+checkboxes were left unticked. This pass confirmed each in code, then closed the two
+genuinely-open items:
+- **Sample assets shipped** — ran `nova-ingest`'s `gen_sample_assets` to commit
+  `assets/cube.glb` (836 B) and `assets/sample.splat` (2048 B); `ingest_demo` now runs
+  zero-config against `assets/cube.glb`.
+- **Security review (item 13)** — audited the three untrusted-input surfaces:
+  - `nova-scripting-embedded`: confirmed safe (eval/import disabled, operation +
+    string/array/map/call caps, capability-gated function registration).
+  - `nova-agent-api`: added a `MAX_COMMANDS_PER_POLL` (10k) cap and `ControlParse`
+    rejection so a hostile 1 MiB control file cannot flood the world with spawns;
+    existing 1 MiB size cap and protocol-version check retained.
+  - `nova-export`: **fixed** `validate_entry_name` — it only split on `/`, so a
+    `\..\` segment bypassed the path-traversal guard on Windows. Now rejects any
+    backslash, absolute paths, `..` segments, and empty segments. Added regression
+    tests for the backslash bypass and empty segments; existing traversal test kept.
 
 ## Open Decisions
 - [x] Editor framework: **RESOLVED — egui/eframe (Rust-native immediate-mode)** over
