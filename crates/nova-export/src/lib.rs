@@ -131,10 +131,7 @@ fn validate_entry_name(name: &str) -> Result<(), PackError> {
             detail: format!("absolute entry name: {name:?}"),
         });
     }
-    if name
-        .split('/')
-        .any(|seg| seg == ".." || seg.is_empty())
-    {
+    if name.split('/').any(|seg| seg == ".." || seg.is_empty()) {
         return Err(PackError::Malformed {
             detail: format!("path traversal in entry name: {name:?}"),
         });
@@ -377,10 +374,7 @@ mod tests {
         buf.extend_from_slice(&(name.len() as u16).to_le_bytes());
         buf.extend_from_slice(name.as_bytes());
         buf.extend_from_slice(&0u64.to_le_bytes());
-        assert!(matches!(
-            unpack(&buf),
-            Err(PackError::Malformed { .. })
-        ));
+        assert!(matches!(unpack(&buf), Err(PackError::Malformed { .. })));
     }
 
     #[test]
@@ -395,10 +389,7 @@ mod tests {
         buf.extend_from_slice(&(name.len() as u16).to_le_bytes());
         buf.extend_from_slice(name.as_bytes());
         buf.extend_from_slice(&0u64.to_le_bytes());
-        assert!(matches!(
-            unpack(&buf),
-            Err(PackError::Malformed { .. })
-        ));
+        assert!(matches!(unpack(&buf), Err(PackError::Malformed { .. })));
     }
 
     #[test]
@@ -412,10 +403,7 @@ mod tests {
         buf.extend_from_slice(&(name.len() as u16).to_le_bytes());
         buf.extend_from_slice(name.as_bytes());
         buf.extend_from_slice(&0u64.to_le_bytes());
-        assert!(matches!(
-            unpack(&buf),
-            Err(PackError::Malformed { .. })
-        ));
+        assert!(matches!(unpack(&buf), Err(PackError::Malformed { .. })));
     }
 
     #[test]

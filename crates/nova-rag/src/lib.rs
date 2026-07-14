@@ -13,9 +13,9 @@
 pub mod embed;
 pub mod index;
 
-pub use embed::{cosine_similarity, Embedder, FeatureHashEmbedder};
 #[cfg(feature = "real-embeddings")]
 pub use embed::RealEmbedder;
+pub use embed::{cosine_similarity, Embedder, FeatureHashEmbedder};
 pub use index::{Document, Index, RagAgent, ScoredHit, SearchError};
 
 /// Convenience: build an [`Index`] from a directory of text-like files.

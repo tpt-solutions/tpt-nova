@@ -232,17 +232,18 @@ impl App {
     /// with the rendered scene. Returns `None` when there is no camera.
     fn camera_matrices(&self) -> Option<(Mat4, Mat4, Vec3)> {
         let aspect = self.viewport_size.0 as f32 / self.viewport_size.1.max(1) as f32;
-        let mut found = None;
-        for (_e, cam, gt) in self.world.query_2::<Camera, GlobalTransform>().into_iter() {
-            let mut proj = *cam;
-            proj.aspect = aspect;
-            let view = gt.0.inverse();
-            let vp = proj.perspective() * view;
-            let forward = gt.0.transform_vector3(Vec3::NEG_Z).normalize();
-            found = Some((vp, vp.inverse(), forward));
-            break;
-        }
-        found
+        self.world
+            .query_2::<Camera, GlobalTransform>()
+            .into_iter()
+            .next()
+            .map(|(_e, cam, gt)| {
+                let mut proj = *cam;
+                proj.aspect = aspect;
+                let view = gt.0.inverse();
+                let vp = proj.perspective() * view;
+                let forward = gt.0.transform_vector3(Vec3::NEG_Z).normalize();
+                (vp, vp.inverse(), forward)
+            })
     }
 
     /// Pick the entity whose projected center is nearest the window pointer
@@ -258,10 +259,8 @@ impl App {
                 let d = ((sx as f32 - self.pointer.x).powi(2)
                     + (sy as f32 - self.pointer.y).powi(2))
                 .sqrt();
-                if d <= radius {
-                    if best.map(|(bd, _)| d < bd).unwrap_or(true) {
-                        best = Some((d, e));
-                    }
+                if d <= radius && best.map(|(bd, _)| d < bd).unwrap_or(true) {
+                    best = Some((d, e));
                 }
             }
         }

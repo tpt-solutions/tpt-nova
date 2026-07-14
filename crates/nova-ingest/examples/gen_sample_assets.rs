@@ -23,8 +23,8 @@ const CUBE_VERTS: [[f32; 3]; 8] = [
 
 /// 12 triangles (36 unsigned-int indices) covering the cube's faces.
 const CUBE_INDICES: [u32; 36] = [
-    0, 1, 2, 0, 2, 3, 4, 6, 5, 4, 7, 6, 0, 4, 5, 0, 5, 1, 1, 5, 6, 1, 6, 2, 2, 6, 7, 2, 7, 3, 3, 7, 4,
-    3, 4, 0,
+    0, 1, 2, 0, 2, 3, 4, 6, 5, 4, 7, 6, 0, 4, 5, 0, 5, 1, 1, 5, 6, 1, 6, 2, 2, 6, 7, 2, 7, 3, 3, 7,
+    4, 3, 4, 0,
 ];
 
 fn assets_dir() -> PathBuf {
@@ -120,7 +120,11 @@ fn main() {
     let splat = assets.join("sample.splat");
     write_cube_glb(&glb).expect("write cube.glb");
     write_sample_splat(&splat).expect("write sample.splat");
-    println!("wrote {} ({} bytes)", glb.display(), std::fs::metadata(&glb).unwrap().len());
+    println!(
+        "wrote {} ({} bytes)",
+        glb.display(),
+        std::fs::metadata(&glb).unwrap().len()
+    );
     println!(
         "wrote {} ({} bytes)",
         splat.display(),

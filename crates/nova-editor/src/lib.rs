@@ -289,7 +289,8 @@ pub fn inspector_panel(
                     // immediate-mode rebuilds.
                     let drag = state.field_drag.entry(field.path.clone()).or_default();
                     let speed = ((max - min) / 200.0).max(1e-4);
-                    let changed = ui.drag_float(&format!("  {}", field.path), &mut val, speed, drag);
+                    let changed =
+                        ui.drag_float(&format!("  {}", field.path), &mut val, speed, drag);
                     if changed {
                         let before = field.value;
                         if set_field(world, e, &field.path, val) {
@@ -399,17 +400,18 @@ mod tests {
 
         let area = Rect::from_min_size(Vec2::new(40.0, 40.0), Vec2::new(240.0, 400.0));
         // Press inside the first field row (Transform.translation.x), then drag
-        // 150px to the right while held. That row sits ~80px down, inside the
-        // panel. translation range is (-10, 10) -> drag speed 0.1/px, so the
+        // 150px to the right while held. The row starts below the title bar
+        // (22px), the entity label, and the "Transform" component label — roughly
+        // 134px down. translation range is (-10, 10) -> drag speed 0.1/px, so the
         // value should jump by ~15.
         let press = UiInput {
-            pointer: Vec2::new(60.0, 80.0),
+            pointer: Vec2::new(60.0, 134.0),
             pointer_down: true,
             pointer_pressed: true,
         };
         let _ = inspector_panel(&mut world, &mut state, press, area);
         let drag = UiInput {
-            pointer: Vec2::new(210.0, 80.0),
+            pointer: Vec2::new(210.0, 134.0),
             pointer_down: true,
             pointer_pressed: false,
         };
@@ -432,8 +434,14 @@ mod tests {
     #[test]
     fn multi_select_toggles_and_reports_size() {
         let mut s = EditorState::new();
-        let a = Entity { index: 0, generation: 0 };
-        let b = Entity { index: 1, generation: 0 };
+        let a = Entity {
+            index: 0,
+            generation: 0,
+        };
+        let b = Entity {
+            index: 1,
+            generation: 0,
+        };
         s.select(a);
         assert_eq!(s.selection_size(), 1);
         s.toggle_select(b);

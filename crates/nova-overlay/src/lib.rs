@@ -275,9 +275,7 @@ impl SelectionTool {
         size: (u32, u32),
         instruction: &str,
     ) -> Result<AiFixRequest, OverlayError> {
-        let region = self
-            .end()
-            .ok_or(OverlayError::EmptyRegion)?;
+        let region = self.end().ok_or(OverlayError::EmptyRegion)?;
         let req = build_fix_request(world, view_proj, size, region, instruction)?;
         self.last_request = Some(req.clone());
         Ok(req)
@@ -416,9 +414,7 @@ mod tests {
         assert_eq!((live.x0, live.y0, live.x1, live.y1), (360, 260, 440, 340));
 
         // Release builds a fix request for the highlighted region.
-        let req = tool
-            .build_request(&world, vp, size, "make it red")
-            .unwrap();
+        let req = tool.build_request(&world, vp, size, "make it red").unwrap();
         assert_eq!(req.entity_ids, vec![format!("{e}")]);
         assert!(req.prompt.contains("make it red"));
         assert!(!tool.is_dragging());

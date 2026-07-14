@@ -656,7 +656,6 @@ fn build_cube_pbr() -> (Vec<Vertex>, Vec<u16>) {
     (vertices, indices)
 }
 
-
 const PBR_SHADER: &str = r#"
 struct Globals {
     view_proj: mat4x4<f32>,

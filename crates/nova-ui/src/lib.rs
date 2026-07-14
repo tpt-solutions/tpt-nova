@@ -432,7 +432,10 @@ impl Ui {
         }
 
         self.draw.push(DrawCommand::Text {
-            pos: Vec2::new(rect.min.x + self.theme.padding, rect.min.y + self.theme.padding * 0.5),
+            pos: Vec2::new(
+                rect.min.x + self.theme.padding,
+                rect.min.y + self.theme.padding * 0.5,
+            ),
             text: label.to_string(),
             color: self.theme.text_color,
             size: self.theme.text_size,
@@ -485,12 +488,18 @@ impl Ui {
         };
         let knob_x = track.min.x + t * track.width();
         self.draw.push(DrawCommand::Rect {
-            rect: Rect::from_min_size(Vec2::new(knob_x - 4.0, track.min.y - 2.0), Vec2::new(8.0, 8.0)),
+            rect: Rect::from_min_size(
+                Vec2::new(knob_x - 4.0, track.min.y - 2.0),
+                Vec2::new(8.0, 8.0),
+            ),
             color: self.theme.button_active,
             rounding: 2.0,
         });
         self.draw.push(DrawCommand::Text {
-            pos: Vec2::new(rect.min.x + self.theme.padding, rect.min.y + self.theme.padding * 0.5),
+            pos: Vec2::new(
+                rect.min.x + self.theme.padding,
+                rect.min.y + self.theme.padding * 0.5,
+            ),
             text: format!("{label}: {value:.3}"),
             color: self.theme.text_color,
             size: self.theme.text_size,
