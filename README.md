@@ -6,6 +6,8 @@ physics-driven, game-ready runtimes.
 
 - Design & vision: [spec.txt](spec.txt)
 - Build checklist / roadmap: [todo.md](todo.md)
+- Getting started (clone → build → run a window): [GETTING_STARTED.md](GETTING_STARTED.md)
+- Contributing / CI gates: [CONTRIBUTING.md](CONTRIBUTING.md)
 - Alpha release gate: [docs/ALPHA_CHECKLIST.md](docs/ALPHA_CHECKLIST.md)
 - Changelog: [CHANGELOG.md](CHANGELOG.md)
 
@@ -53,7 +55,14 @@ full control list and clone-to-window walkthrough.
 
 The self-debugging loop: the engine emits telemetry (`nova-telemetry`) and
 hot-applies a control file written by an external AI agent
-(`nova-agent-api`), closing the loop without a human in the middle.
+(`nova-agent-api`), closing the loop without a human in the middle. See
+`cargo run -p nova-agent-api --example agent_fix_loop` for a flagship,
+end-to-end demo wiring `nova-rag` (context retrieval), `nova-agent-api`
+(commands), and `nova-overlay` (highlight → fix prompt) together.
+
+`nova-sample-game` also works as a forkable project template: it wires the
+full physics/scene/agent/splat/export pipeline together and is a reasonable
+starting point for a new game built on the engine, not just a smoke test.
 
 ## License
 

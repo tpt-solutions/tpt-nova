@@ -59,14 +59,52 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
+  features:
+    name: optional feature builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libx11-dev libxrandr-dev libxi-dev libxcursor-dev \
+            libxkbcommon-dev libwayland-dev libudev-dev \
+            libasound2-dev pkg-config
+
+      # Exercise the optional feature flags that the default `cargo test
+      # --workspace` run never enables, so regressions in these code paths are
+      # caught. The nova-rag `real-embeddings` test is `#[ignore]` (it downloads
+      # a model), so it compiles + runs the offline tests without network.
+      - name: Test optional features
+        run: |
+          cargo test -p nova-rag --features real-embeddings
+          cargo test -p nova-agent-api --features rag
+          cargo test -p nova-splat --features render
+
   coverage:
     name: coverage (tarpaulin)
     runs-on: ubuntu-latest
     # Coverage is now a soft gate: tarpaulin fails the job (and therefore the
     # pipeline) if line coverage drops below the threshold, catching
-    # catastrophic regressions. The threshold is deliberately conservative
-    # because GPU-only paths cannot be exercised under CI; tune it in the
-    # `fail-under` flag below as coverage matures.
+    # catastrophic regressions. The threshold was raised from the original 15
+    # after the Phase 6/7 test-expansion pass; tune it in the `fail-under` flag
+    # below as coverage matures.
     steps:
       - uses: actions/checkout@v4
 
@@ -103,7 +141,7 @@ jobs:
         run: |
           cargo tarpaulin --workspace --out Lcov --output-dir coverage \
             --exclude-files "*/tests/*" "*/benches/*" \
-            --fail-under 15 \
+            --fail-under 30 \
             --timeout 300
           echo "## Coverage baseline (tarpaulin)" >> "$GITHUB_STEP_SUMMARY"
           if [ -f coverage/lcov.info ]; then

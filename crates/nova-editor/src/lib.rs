@@ -3,9 +3,11 @@
 //! The editor is intentionally **logic-only and framework-agnostic**: every
 //! module here operates on the ECS [`World`](nova_ecs::World) and emits or
 //! consumes plain data (selection, dotted field paths, gizmo drags, curve
-//! points). The chosen front-end (egui, per the roadmap decision) renders these
-//! models; the immediate-mode [`nova_ui`] draw list is used for the in-engine
-//! panels so tooling and runtime UI share one primitive set.
+//! points). The front-end is the bespoke immediate-mode [`nova_ui`] draw list
+//! (not egui/eframe — an earlier roadmap decision named egui, but the shipped
+//! implementation is a hand-rolled `Ui`/`DrawList` stack rendered by
+//! `nova-render`'s `UiOverlay` pass), so tooling and runtime UI share one
+//! primitive set.
 //!
 //! Modules:
 //! - [`hierarchy`] — flatten the entity parent/child graph for the tree panel.
@@ -19,6 +21,7 @@ pub mod hierarchy;
 pub mod inspector;
 pub mod vibe;
 
+use nova_ecs::transform::Transform;
 use nova_ecs::{Entity, World};
 use nova_ui::{DragState, Rect, Ui, UiInput};
 use std::collections::HashMap;
@@ -27,7 +30,7 @@ pub use gizmo::{apply_gizmo, GizmoMode, GizmoSnap};
 pub use gizmo3d::{apply_gizmo_3d, drag_plane_point, ray_plane, GizmoMode3D, Ray};
 pub use hierarchy::{build_hierarchy, HierarchyItem};
 pub use inspector::{inspect_entity, set_field, ComponentInspection, Field};
-pub use vibe::{BezierCurve, CurveEditor, GravityCurveBinding};
+pub use vibe::{normalized_to_screen, BezierCurve, CurveEditor, GravityCurveBinding};
 
 use std::collections::HashSet;
 
@@ -39,13 +42,24 @@ pub struct AssetEntry {
     pub kind: String,
 }
 
-/// A single recorded transform-field edit, for undo/redo.
+/// A single recorded edit, for undo/redo.
 #[derive(Debug, Clone)]
-struct EditRecord {
-    entity: Entity,
-    path: String,
-    before: f32,
-    after: f32,
+enum EditRecord {
+    /// A single scalar component-field edit (dotted path, see [`set_field`]).
+    Field {
+        entity: Entity,
+        path: String,
+        before: f32,
+        after: f32,
+    },
+    /// A whole-`Transform` edit (e.g. a gizmo drag), stored as before/after
+    /// snapshots so arbitrary rotation/scale/translation changes round-trip
+    /// exactly on undo instead of only restoring a single scalar axis.
+    Transform {
+        entity: Entity,
+        before: Transform,
+        after: Transform,
+    },
 }
 
 /// A bounded undo/redo stack of component-field edits.
@@ -66,19 +80,47 @@ impl Default for EditHistory {
     }
 }
 
+/// True if two transforms differ by more than an epsilon on any of
+/// translation/rotation/scale. Used to skip no-op gizmo drags when recording
+/// undo history.
+fn transform_changed(a: &Transform, b: &Transform) -> bool {
+    let eps = 1e-6;
+    (a.translation - b.translation).length() > eps
+        || (a.rotation - b.rotation).length() > eps
+        || (a.scale - b.scale).length() > eps
+}
+
 impl EditHistory {
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Record an edit, pushing it onto the undo stack and clearing redo.
+    /// Record a scalar field edit, pushing it onto the undo stack and clearing
+    /// redo.
     pub fn record(&mut self, entity: Entity, path: impl Into<String>, before: f32, after: f32) {
         if (before - after).abs() < 1e-6 {
             return;
         }
-        self.undo_stack.push(EditRecord {
+        self.undo_stack.push(EditRecord::Field {
             entity,
             path: path.into(),
+            before,
+            after,
+        });
+        if self.undo_stack.len() > self.limit {
+            self.undo_stack.remove(0);
+        }
+        self.redo_stack.clear();
+    }
+
+    /// Record a whole-`Transform` edit (e.g. a gizmo drag), storing before/after
+    /// snapshots so undo restores the exact previous pose.
+    pub fn record_transform(&mut self, entity: Entity, before: Transform, after: Transform) {
+        if !transform_changed(&before, &after) {
+            return;
+        }
+        self.undo_stack.push(EditRecord::Transform {
+            entity,
             before,
             after,
         });
@@ -102,7 +144,21 @@ impl EditHistory {
             Some(r) => r,
             None => return false,
         };
-        let _ = set_field(world, rec.entity, &rec.path, rec.before);
+        match &rec {
+            EditRecord::Field {
+                entity,
+                path,
+                before,
+                ..
+            } => {
+                let _ = set_field(world, *entity, path, *before);
+            }
+            EditRecord::Transform { entity, before, .. } => {
+                if let Some(t) = world.get_component_mut::<Transform>(*entity) {
+                    *t = *before;
+                }
+            }
+        }
         self.redo_stack.push(rec);
         true
     }
@@ -113,14 +169,28 @@ impl EditHistory {
             Some(r) => r,
             None => return false,
         };
-        let _ = set_field(world, rec.entity, &rec.path, rec.after);
+        match &rec {
+            EditRecord::Field {
+                entity,
+                path,
+                after,
+                ..
+            } => {
+                let _ = set_field(world, *entity, path, *after);
+            }
+            EditRecord::Transform { entity, after, .. } => {
+                if let Some(t) = world.get_component_mut::<Transform>(*entity) {
+                    *t = *after;
+                }
+            }
+        }
         self.undo_stack.push(rec);
         true
     }
 }
 
 /// Aggregate editor state carried across frames.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct EditorState {
     /// Primary selection (the gizmo target / inspector focus).
     pub selected: Option<Entity>,
@@ -141,6 +211,28 @@ pub struct EditorState {
     /// dotted component path so a drag survives across the immediate-mode frame
     /// rebuilds.
     pub field_drag: HashMap<String, DragState>,
+    /// The "Vibe GUI" Bézier curve editor (drives a physics parameter live).
+    pub vibe: CurveEditor,
+    /// Binding mapping the curve to a world gravity magnitude.
+    pub vibe_binding: GravityCurveBinding,
+}
+
+impl Default for EditorState {
+    fn default() -> Self {
+        EditorState {
+            selected: None,
+            selection: HashSet::new(),
+            gizmo_mode: GizmoMode::Move,
+            snap: GizmoSnap::default(),
+            playing: false,
+            assets: Vec::new(),
+            selected_asset: None,
+            history: EditHistory::default(),
+            field_drag: HashMap::new(),
+            vibe: CurveEditor::default(),
+            vibe_binding: GravityCurveBinding::default(),
+        }
+    }
 }
 
 impl EditorState {
@@ -221,6 +313,7 @@ pub fn hierarchy_panel(
     state: &mut EditorState,
     input: UiInput,
     area: Rect,
+    shift: bool,
 ) -> nova_ui::DrawList {
     let items = build_hierarchy(world);
     let mut ui = Ui::new(input);
@@ -231,7 +324,13 @@ pub fn hierarchy_panel(
         let label = format!("{indent}{marker}{}", item.entity);
         let resp = ui.button(&label);
         if resp.clicked {
-            state.select(item.entity);
+            // Shift-click toggles membership in the multi-selection; a plain
+            // click replaces the selection with just this entity.
+            if shift {
+                state.toggle_select(item.entity);
+            } else {
+                state.select(item.entity);
+            }
         }
     }
     ui.end_panel();
@@ -364,7 +463,7 @@ mod tests {
         let area = Rect::from_min_size(Vec2::new(0.0, 0.0), Vec2::new(240.0, 400.0));
 
         // First pass with no click to discover the row's rect.
-        let _ = hierarchy_panel(&world, &mut state, UiInput::default(), area);
+        let _ = hierarchy_panel(&world, &mut state, UiInput::default(), area, false);
         // The single entity's button sits just below the title bar + padding.
         // Click roughly there.
         let click = UiInput {
@@ -372,8 +471,38 @@ mod tests {
             pointer_down: true,
             pointer_pressed: true,
         };
-        let _ = hierarchy_panel(&world, &mut state, click, area);
+        let _ = hierarchy_panel(&world, &mut state, click, area, false);
         assert_eq!(state.selected, Some(e));
+    }
+
+    #[test]
+    fn hierarchy_panel_shift_click_multi_selects() {
+        let mut world = World::new();
+        let a = world.spawn();
+        let b = world.spawn();
+        world.add_component(a, Transform::default());
+        world.add_component(b, Transform::default());
+
+        let mut state = EditorState::new();
+        let area = Rect::from_min_size(Vec2::new(0.0, 0.0), Vec2::new(240.0, 400.0));
+        // Select `a` first with a plain click.
+        let click_a = UiInput {
+            pointer: Vec2::new(30.0, 45.0),
+            pointer_down: true,
+            pointer_pressed: true,
+        };
+        let _ = hierarchy_panel(&world, &mut state, click_a, area, false);
+        assert_eq!(state.selected, Some(a));
+
+        // Shift-click `b` to add it to the selection.
+        let click_b = UiInput {
+            pointer: Vec2::new(30.0, 71.0),
+            pointer_down: true,
+            pointer_pressed: true,
+        };
+        let _ = hierarchy_panel(&world, &mut state, click_b, area, true);
+        assert_eq!(state.selection_size(), 2);
+        assert!(state.selection.contains(&b));
     }
 
     #[test]
@@ -470,5 +599,52 @@ mod tests {
         let area = Rect::from_min_size(Vec2::new(40.0, 40.0), Vec2::new(240.0, 400.0));
         let draw = asset_browser_panel(&mut state, UiInput::default(), area);
         assert!(!draw.is_empty());
+    }
+
+    #[test]
+    fn transform_undo_restores_pose() {
+        // A gizmo drag records a whole-Transform edit; undo must restore the
+        // exact pre-drag pose, including arbitrary rotation/scale.
+        let mut world = World::new();
+        let e = world.spawn();
+        let before = Transform::from_translation(Vec3::new(1.0, 2.0, 3.0));
+        world.add_component(e, before);
+
+        let mut state = EditorState::new();
+        let after = Transform::new(
+            Vec3::new(4.0, 5.0, 6.0),
+            nova_ecs::Quat::from_rotation_y(0.7),
+            Vec3::new(2.0, 2.0, 2.0),
+        );
+        state.history.record_transform(e, before, after);
+        assert!(state.history.can_undo());
+
+        // Apply the "after" pose, then undo back to "before".
+        *world.get_component_mut::<Transform>(e).unwrap() = after;
+        state.history.undo(&mut world);
+        let t = world.get_component::<Transform>(e).unwrap();
+        assert!((t.translation - before.translation).length() < 1e-5);
+        assert!((t.rotation - before.rotation).length() < 1e-5);
+        assert!((t.scale - before.scale).length() < 1e-5);
+
+        // And redo re-applies "after".
+        state.history.redo(&mut world);
+        let t2 = world.get_component::<Transform>(e).unwrap();
+        assert!((t2.translation - after.translation).length() < 1e-5);
+    }
+
+    #[test]
+    fn transform_noop_drag_is_not_recorded() {
+        let mut state = EditorState::new();
+        let before = Transform::from_translation(Vec3::new(1.0, 0.0, 0.0));
+        state.history.record_transform(
+            Entity {
+                index: 0,
+                generation: 0,
+            },
+            before,
+            before,
+        );
+        assert!(!state.history.can_undo());
     }
 }

@@ -16,7 +16,7 @@ use rodio::source::Source;
 use rodio::stream::{DeviceSinkBuilder, MixerDeviceSink};
 use rodio::{Decoder, Player, SpatialPlayer};
 
-pub use mixer::{Bus, Listener, Mixer, SpatialParams, Vec3};
+pub use mixer::{spatial_attenuation, Bus, Listener, Mixer, SpatialParams, Vec3};
 
 /// An in-memory decodable sound (WAV/OGG/FLAC/MP3, per rodio's decoders).
 ///
@@ -66,6 +66,9 @@ struct SpatialVoice {
     player: SpatialPlayer,
     volume: f32,
     bus: Bus,
+    /// Cached distance attenuation from the spawn-time `SpatialParams`, so
+    /// volume re-application after a bus/master change keeps the same falloff.
+    attenuation: f32,
 }
 
 /// Owns the audio output device and all currently-playing sounds.
@@ -123,15 +126,13 @@ impl AudioEngine {
 
     /// Play a positional (3D) sound at `source` relative to `listener`.
     ///
-    /// Binaural panning and distance attenuation are handled by
-    /// `rodio::SpatialPlayer` using the listener's ear positions; the engine
-    /// only applies the master/bus/sound gain on top. `params` selects the
-    /// distance/rolloff model reported by [`Mixer::spatial_gain`] for
-    /// device-independent previews and matches the intent of the live path.
-    /// Returns `true` if a voice was started. Falls back to a silent no-op
-    /// (returns `false`) when no output device is available, so callers can
-    /// play unconditionally.
-    #[allow(unused_variables)]
+    /// Binaural panning is handled by `rodio::SpatialPlayer` from the listener's
+    /// ear positions; the engine applies the master/bus/sound gain on top, and
+    /// layers the caller's [`SpatialParams`] distance-rolloff model
+    /// (`ref_distance`/`max_distance`/`rolloff`) so a designer-tuned falloff is
+    /// actually applied rather than silently ignored. Returns `true` if a voice
+    /// was started. Falls back to a silent no-op (returns `false`) when no output
+    /// device is available, so callers can play unconditionally.
     pub fn play_spatial(
         &mut self,
         sound: &Sound,
@@ -152,17 +153,20 @@ impl AudioEngine {
                 return false;
             }
         };
+        // Designer-controlled distance attenuation from `SpatialParams`. This is
+        // layered on top of rodio's own internal distance model, so the rolloff
+        // shape the caller asked for is genuinely applied (a source past
+        // `max_distance` is forced silent regardless of rodio's model).
+        let att = spatial_attenuation(listener, source, params).max(0.0);
         let (left_ear, right_ear) = listener.ear_positions(0.1);
         let player = SpatialPlayer::connect_new(device.mixer(), source, left_ear, right_ear);
         player.append(decoded);
-        // SpatialPlayer already attenuates by distance, so feed it the flat
-        // master*bus*sound gain; the analytic `Mixer::spatial_gain` model is
-        // used for device-independent previews / unit tests instead.
-        player.set_volume(self.mixer.gain(bus, sound_volume).max(0.0));
+        player.set_volume((self.mixer.gain(bus, sound_volume) * att).max(0.0));
         self.spatial.push(SpatialVoice {
             player,
             volume: sound_volume,
             bus,
+            attenuation: att,
         });
         true
     }
@@ -255,7 +259,7 @@ impl AudioEngine {
         }
         for v in &self.spatial {
             v.player
-                .set_volume(self.mixer.gain(v.bus, v.volume).max(0.0));
+                .set_volume((self.mixer.gain(v.bus, v.volume) * v.attenuation).max(0.0));
         }
     }
 
@@ -396,5 +400,32 @@ mod tests {
                 .mixer()
                 .spatial_gain(&listener, [0.0, 0.0, 0.0], &params, Bus::Sfx, 1.0);
         assert!((cl - cr).abs() < 1e-4);
+    }
+
+    #[test]
+    fn rolloff_model_changes_previewed_volume() {
+        // The `SpatialParams` rolloff model must actually move the gain: a
+        // steeper rolloff attenuates a mid-distance source more than the linear
+        // default, proving `play_spatial` no longer ignores `params`.
+        let engine = AudioEngine::new();
+        let listener = Listener::default();
+        let src = [10.0, 0.0, 0.0];
+        let linear =
+            engine
+                .mixer()
+                .spatial_gain(&listener, src, &SpatialParams::default(), Bus::Sfx, 1.0);
+        let steep = engine.mixer().spatial_gain(
+            &listener,
+            src,
+            &SpatialParams {
+                rolloff: 3.0,
+                ..Default::default()
+            },
+            Bus::Sfx,
+            1.0,
+        );
+        let l_sum = linear[0] + linear[1];
+        let s_sum = steep[0] + steep[1];
+        assert!(s_sum < l_sum, "steeper rolloff should be quieter");
     }
 }

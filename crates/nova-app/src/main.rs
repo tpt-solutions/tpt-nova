@@ -21,7 +21,9 @@ use glam::{EulerRot, Vec2, Vec3};
 use nova_ecs::scheduler::Scheduler;
 use nova_ecs::transform::{Camera, GlobalTransform, Mesh, MeshKind, Transform};
 use nova_ecs::{Entity, Mat4, Quat, World};
-use nova_editor::{asset_browser_panel, hierarchy_panel, inspector_panel, EditorState};
+use nova_editor::{
+    asset_browser_panel, hierarchy_panel, inspector_panel, normalized_to_screen, EditorState,
+};
 use nova_input::{default_action_map, ActionMap, InputState};
 use nova_overlay::{project_to_screen, SelectionTool};
 use nova_render::Renderer;
@@ -31,7 +33,7 @@ use serde::Deserialize;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, WindowEvent as WinitWindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::keyboard::{Key, ModifiersState};
+use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{Window, WindowAttributes};
 
 const FIXED_DT: f32 = 1.0 / 60.0;
@@ -72,15 +74,22 @@ struct RotationXYZ {
 pub(crate) fn editor_layout(size: (u32, u32)) -> EditorLayout {
     let w = size.0 as f32;
     let h = size.1 as f32;
+    let center_w = (w - 600.0).max(1.0);
     EditorLayout {
         toolbar: Rect::from_min_size(Vec2::ZERO, Vec2::new(w, 30.0)),
         hierarchy: Rect::from_min_size(Vec2::new(8.0, 38.0), Vec2::new(260.0, h - 196.0)),
         inspector: Rect::from_min_size(Vec2::new(w - 300.0, 38.0), Vec2::new(284.0, h - 46.0)),
         assets: Rect::from_min_size(Vec2::new(8.0, h - 150.0), Vec2::new(260.0, 140.0)),
-        // The interactive 3D region: the full window minus the side/bottom panels.
+        // The "Highlight & Fix" instruction field, shown across the top-center
+        // while the Highlight tool is active.
+        instruction: Rect::from_min_size(Vec2::new(280.0, 34.0), Vec2::new(center_w, 26.0)),
+        // The "Vibe GUI" Bézier curve editor, along the bottom-center strip.
+        vibe: Rect::from_min_size(Vec2::new(280.0, h - 142.0), Vec2::new(center_w, 96.0)),
+        // The interactive 3D region: the full window minus the side/bottom panels
+        // and the vibe strip at the bottom.
         viewport: Rect::from_min_size(
-            Vec2::new(280.0, 38.0),
-            Vec2::new((w - 600.0).max(1.0), h - 46.0),
+            Vec2::new(280.0, 62.0),
+            Vec2::new(center_w, (h - 150.0 - 62.0).max(1.0)),
         ),
     }
 }
@@ -91,6 +100,8 @@ pub(crate) struct EditorLayout {
     hierarchy: Rect,
     inspector: Rect,
     assets: Rect,
+    instruction: Rect,
+    vibe: Rect,
     viewport: Rect,
 }
 
@@ -105,6 +116,8 @@ impl EditorLayout {
             || self.hierarchy.contains(p)
             || self.inspector.contains(p)
             || self.assets.contains(p)
+            || self.instruction.contains(p)
+            || self.vibe.contains(p)
     }
 }
 
@@ -140,10 +153,21 @@ struct App {
     viewport_size: (u32, u32),
     /// Current keyboard modifier state (tracked via `ModifiersChanged`).
     modifiers: ModifiersState,
-    /// Active gizmo drag: (start pointer, entity).
-    gizmo_drag: Option<(Vec2, Entity)>,
+    /// Active gizmo drag: (start pointer, entity, transform at drag start). The
+    /// pre-drag transform is kept so the drag can be recorded into the undo
+    /// history on release.
+    gizmo_drag: Option<(Vec2, Entity, Transform)>,
     /// The most recent "Highlight & Fix" request, kept for display.
     last_fix: Option<nova_overlay::AiFixRequest>,
+    /// The dolly distance of the editor camera from the origin, driven by the
+    /// mouse wheel (viewport zoom).
+    camera_distance: f32,
+    /// The "Highlight & Fix" natural-language instruction typed by the user
+    /// (replaces the previously-hardcoded literal). Edited via the in-viewport
+    /// text field; fed to the fix request on release.
+    fix_instruction: String,
+    /// Whether the fix-instruction text field currently has keyboard focus.
+    fix_text_focused: bool,
 }
 
 impl App {
@@ -216,6 +240,9 @@ impl App {
             modifiers: ModifiersState::empty(),
             gizmo_drag: None,
             last_fix: None,
+            camera_distance: 3.5,
+            fix_instruction: String::from("fix selection"),
+            fix_text_focused: false,
         }
     }
 
@@ -330,9 +357,24 @@ impl App {
             }
         }
 
+        // Viewport zoom: the mouse wheel dollies the editor camera toward/away
+        // from the origin. `scroll` is accumulated per-frame by `InputState` and
+        // cleared by `end_frame` below, so read it before then.
+        if let Some(input) = self.world.resource::<InputState>() {
+            let scroll = input.scroll;
+            if scroll != 0.0 {
+                self.camera_distance = (self.camera_distance - scroll * 0.5).clamp(1.0, 50.0);
+            }
+        }
+        if let Some(cam_t) = self.world.get_component_mut::<Transform>(self.camera) {
+            cam_t.translation.z = self.camera_distance;
+        }
+        // Re-propagate so the gizmo's camera matrices reflect the new distance.
+        nova_ecs::scene_graph::propagate_transforms(&mut self.world);
+
         // Continuous gizmo drag: apply the live delta every frame the button is
         // held over the selection.
-        if let Some((start, entity)) = self.gizmo_drag {
+        if let Some((start, entity, _before)) = self.gizmo_drag {
             if let Some((_vp, inv_vp, forward)) = self.camera_matrices() {
                 let size = self.viewport_size;
                 nova_editor::apply_gizmo_3d(
@@ -390,6 +432,7 @@ impl App {
             &mut self.editor,
             input,
             layout.hierarchy,
+            self.modifiers.shift_key(),
         ));
         draw.extend(inspector_panel(
             &mut self.world,
@@ -398,6 +441,16 @@ impl App {
             layout.inspector,
         ));
         draw.extend(asset_browser_panel(&mut self.editor, input, layout.assets));
+
+        // ---- Vibe GUI (Bézier curve editor) ------------------------------
+        // Drive interaction each frame (immediate mode), then render the curve.
+        self.editor.vibe.interact(
+            layout.vibe,
+            self.pointer,
+            self.pointer_pressed,
+            self.pointer_down,
+        );
+        draw.extend(self.draw_vibe_panel(layout.vibe));
 
         // ---- Gizmo handles for the current selection ----------------------
         if self.tool == ViewportTool::Gizmo {
@@ -421,6 +474,17 @@ impl App {
 
         // ---- Highlight & Fix marquee -------------------------------------
         if self.tool == ViewportTool::Highlight {
+            // The instruction text field (typed by the user, replaces the old
+            // hardcoded literal).
+            let mut ui = Ui::new(input);
+            ui.begin_panel(layout.instruction, Some("Highlight & Fix"));
+            let resp = ui.text_input("Instruction", &self.fix_instruction, self.fix_text_focused);
+            if resp.clicked {
+                self.fix_text_focused = !self.fix_text_focused;
+            }
+            ui.end_panel();
+            draw.extend(ui.finish());
+
             if let Some(rect) = self.overlay.current_rect(self.viewport_size) {
                 draw.push(DrawCommand::Rect {
                     rect: Rect::from_min_size(
@@ -433,6 +497,59 @@ impl App {
             }
         }
 
+        draw
+    }
+
+    /// Render the Vibe GUI Bézier curve editor into a draw list for `area`.
+    fn draw_vibe_panel(&self, area: Rect) -> DrawList {
+        let mut draw: DrawList = Vec::new();
+        draw.push(DrawCommand::Rect {
+            rect: area,
+            color: Color::rgba(0.12, 0.12, 0.14, 0.95),
+            rounding: 3.0,
+        });
+        draw.push(DrawCommand::Text {
+            pos: Vec2::new(area.min.x + 8.0, area.min.y + 4.0),
+            text: "Vibe (gravity)".to_string(),
+            color: Color::rgb(0.92, 0.92, 0.95),
+            size: 14.0,
+        });
+
+        let plot = Rect::from_min_size(
+            Vec2::new(area.min.x + 8.0, area.min.y + 24.0),
+            Vec2::new(area.width() - 16.0, area.height() - 32.0),
+        );
+        draw.push(DrawCommand::Rect {
+            rect: plot,
+            color: Color::rgb(0.08, 0.08, 0.10),
+            rounding: 2.0,
+        });
+
+        // The curve, drawn as a polyline of small squares.
+        for p in self.editor.vibe.curve.polyline(40) {
+            let s = normalized_to_screen(plot, p);
+            draw.push(DrawCommand::Rect {
+                rect: Rect::from_min_size(s, Vec2::new(2.0, 2.0)),
+                color: Color::rgb(0.4, 0.9, 1.0),
+                rounding: 0.0,
+            });
+        }
+        // Draggable control-point handles.
+        for r in self.editor.vibe.handle_rects(plot) {
+            draw.push(DrawCommand::Rect {
+                rect: r,
+                color: Color::rgb(0.2, 0.9, 0.3),
+                rounding: 2.0,
+            });
+        }
+
+        let g = self.editor.vibe_binding.gravity(&self.editor.vibe.curve);
+        draw.push(DrawCommand::Text {
+            pos: Vec2::new(plot.min.x + 4.0, plot.max.y - 16.0),
+            text: format!("gravity y = {:.2}", g.y),
+            color: Color::rgb(0.9, 0.9, 0.6),
+            size: 12.0,
+        });
         draw
     }
 
@@ -522,17 +639,55 @@ impl App {
         if layout.over_panel(self.pointer) {
             return; // let the panel UI consume the click
         }
+
+        // Shift-click in the viewport toggles the entity into the multi-selection
+        // instead of replacing it (mirrors the hierarchy panel behavior).
+        let shift = self.modifiers.shift_key();
+
         match self.tool {
             ViewportTool::Gizmo => {
-                // Select if nothing is selected; otherwise start a gizmo drag.
+                // Spawning: if an asset is selected in the browser, a viewport
+                // click drops a new entity of that kind and selects it, so the
+                // browser's `selected_asset` actually does something.
+                if let Some(asset) = self.editor.selected_asset.clone() {
+                    let e = self.world.spawn();
+                    self.world
+                        .add_component(e, Transform::from_translation(Vec3::ZERO));
+                    self.world.add_component(
+                        e,
+                        Mesh {
+                            kind: MeshKind::Cube,
+                        },
+                    );
+                    self.world.add_component(e, GlobalTransform::identity());
+                    self.editor.select(e);
+                    log::info!("spawned asset '{asset}' as new entity");
+                    return;
+                }
+
                 if let Some((vp, _, _)) = self.camera_matrices() {
+                    let pick = self.pick_entity(vp, 40.0);
+                    if shift {
+                        // Shift-click is for multi-select, not a gizmo drag.
+                        if let Some(e) = pick {
+                            self.editor.toggle_select(e);
+                        }
+                        return;
+                    }
                     if self.editor.selected.is_none() {
-                        if let Some(e) = self.pick_entity(vp, 40.0) {
+                        if let Some(e) = pick {
                             self.editor.select(e);
                         }
                     }
                     if let Some(sel) = self.editor.selected {
-                        self.gizmo_drag = Some((self.pointer, sel));
+                        // Capture the pre-drag transform so the drag can be
+                        // recorded into the undo history on release.
+                        let before = self
+                            .world
+                            .get_component::<Transform>(sel)
+                            .copied()
+                            .unwrap_or_default();
+                        self.gizmo_drag = Some((self.pointer, sel, before));
                     }
                 }
             }
@@ -545,15 +700,24 @@ impl App {
 
     /// End a pointer interaction (mouse-up).
     fn on_pointer_release(&mut self) {
-        self.gizmo_drag = None;
+        // Record the completed gizmo drag into the undo history so 3D moves /
+        // rotations / scales are undoable (previously the gizmo bypassed
+        // `EditHistory::record`).
+        if let Some((_start, entity, before)) = self.gizmo_drag.take() {
+            if let Some(after) = self.world.get_component::<Transform>(entity).copied() {
+                self.editor.history.record_transform(entity, before, after);
+            }
+        }
         if self.tool == ViewportTool::Highlight {
             let (x, y) = (self.pointer.x as u32, self.pointer.y as u32);
             self.overlay.drag(x, y);
             if let Some((vp, _, _)) = self.camera_matrices() {
-                if let Ok(req) =
-                    self.overlay
-                        .build_request(&self.world, vp, self.viewport_size, "fix selection")
-                {
+                if let Ok(req) = self.overlay.build_request(
+                    &self.world,
+                    vp,
+                    self.viewport_size,
+                    &self.fix_instruction,
+                ) {
                     log::info!("Highlight & Fix request:\n{}", req.prompt);
                     self.last_fix = Some(req);
                 }
@@ -563,6 +727,20 @@ impl App {
 
     fn handle_key(&mut self, key: &Key, pressed: bool) {
         if !pressed {
+            return;
+        }
+        // While the Highlight & Fix instruction field has focus, keystrokes edit
+        // that string instead of driving editor shortcuts. Escape unfocuses.
+        if self.fix_text_focused {
+            match key {
+                Key::Character(c) => self.fix_instruction.push_str(c.as_str()),
+                Key::Named(NamedKey::Backspace) => {
+                    self.fix_instruction.pop();
+                }
+                Key::Named(NamedKey::Space) => self.fix_instruction.push(' '),
+                Key::Named(NamedKey::Escape) => self.fix_text_focused = false,
+                _ => {}
+            }
             return;
         }
         let ctrl = self.modifiers.control_key();
@@ -1079,5 +1257,84 @@ mod tests {
         let p0 = app.editor.playing;
         app.handle_key(&key("p"), pressed);
         assert_ne!(app.editor.playing, p0);
+    }
+
+    #[test]
+    fn gizmo_drag_is_undoable() {
+        // A 3D gizmo drag must land in the undo history and be reversible.
+        let mut app = App::new(0xCAFE);
+        app.viewport_size = (1280, 720);
+
+        let before = app
+            .world
+            .get_component::<Transform>(app.cube)
+            .copied()
+            .unwrap();
+        app.editor.select(app.cube);
+        // Begin a drag from the viewport center, then move 100px right.
+        app.gizmo_drag = Some((Vec2::new(640.0, 360.0), app.cube, before));
+        app.pointer = Vec2::new(740.0, 360.0);
+        app.render_frame();
+
+        let after = app
+            .world
+            .get_component::<Transform>(app.cube)
+            .copied()
+            .unwrap();
+        assert!(
+            (after.translation.x - before.translation.x).abs() > 1e-3,
+            "drag should move the cube along x"
+        );
+
+        // Release records the drag into history.
+        app.on_pointer_release();
+        assert!(app.editor.history.can_undo());
+
+        // Undo restores the exact pre-drag pose.
+        app.editor.history.undo(&mut app.world);
+        let restored = app
+            .world
+            .get_component::<Transform>(app.cube)
+            .copied()
+            .unwrap();
+        assert!((restored.translation.x - before.translation.x).abs() < 1e-4);
+    }
+
+    #[test]
+    fn scroll_wheel_dollies_camera() {
+        // The mouse wheel must drive viewport zoom via `camera_distance`.
+        let mut app = App::new(1);
+        app.viewport_size = (1280, 720);
+        let d0 = app.camera_distance;
+        if let Some(input) = app.world.resource_mut::<InputState>() {
+            input.scroll = 2.0;
+        }
+        app.render_frame();
+        assert!(
+            app.camera_distance < d0,
+            "positive scroll should dolly the camera closer"
+        );
+    }
+
+    #[test]
+    fn asset_browser_selection_spawns_on_viewport_click() {
+        // Selecting an asset in the browser and clicking the viewport must
+        // actually spawn an entity (makes `selected_asset` do something).
+        let mut app = App::new(2);
+        app.viewport_size = (1280, 720);
+        app.editor.selected_asset = Some("cube.glb".to_string());
+        let before = app.world.entity_count();
+
+        app.pointer = Vec2::new(640.0, 400.0);
+        app.pointer_down = true;
+        app.pointer_pressed = true;
+        app.on_pointer_press();
+
+        assert_eq!(
+            app.world.entity_count(),
+            before + 1,
+            "clicking with a selected asset should spawn an entity"
+        );
+        assert!(app.editor.selected.is_some());
     }
 }

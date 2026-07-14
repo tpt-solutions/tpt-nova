@@ -247,12 +247,101 @@ genuinely-open items:
     backslash, absolute paths, `..` segments, and empty segments. Added regression
     tests for the backslash bypass and empty segments; existing traversal test kept.
 
+## Phase 7: Post-Review Hardening & Feature Completion (2026-07-15 platform review)
+A platform review on 2026-07-15 found that several Phase 6 "done" items don't function
+end-to-end in the running app, docs describe a UI framework that was never adopted, and
+onboarding/adoption has real friction. This phase tracks closing those gaps.
+### Correctness bugs
+- [x] Fix 3D viewport gizmo drags not being undoable (`apply_gizmo_3d` in
+      `crates/nova-app/src/main.rs` bypasses `EditHistory::record`)
+- [x] Verify/fix `nova-audio::play_spatial`'s unused `SpatialParams` — confirm rolloff
+      model is actually applied, or wire it in if it's a no-op (`crates/nova-audio/src/lib.rs`)
+- [x] Add an `--all-features` (or targeted per-feature) build+test job to
+      `.github/workflows/ci.yml` so `nova-rag`'s `real-embeddings`, `nova-agent-api`'s
+      `rag`, and `nova-splat`'s `render` feature are actually exercised in CI
+- [x] Revisit the `cargo-tarpaulin --fail-under 15` coverage floor now that Phase 6
+      coverage work is complete; raise it to reflect actual coverage
+### Documentation corrections
+- [x] Correct the stale egui/eframe claim in `CLAUDE.md` and
+      `crates/nova-editor/src/lib.rs` module docs to describe the actual bespoke
+      `nova-ui`/`nova-render` immediate-mode stack
+- [x] Update the "Open Decisions — Editor framework" entry (todo.md, resolved-egui
+      note) to reflect that the shipped implementation is the bespoke stack, not
+      egui/eframe
+### Editor: wire up dead/unwired code
+- [ ] Wire `EditorState::toggle_select` into a real input path (shift-click in the
+      hierarchy panel and/or viewport) so multi-select is actually reachable
+- [ ] Make the asset browser's `selected_asset` do something (spawn-on-click at
+      minimum) instead of being written and never read
+- [ ] Instantiate the Vibe GUI (`vibe.rs` Bézier curve editor) as a real panel in
+      `nova-app` — it's fully implemented/tested but never appears in the running editor
+- [ ] Wire `InputState.scroll` into viewport camera zoom (currently captured and
+      never read)
+- [ ] Capture typed keyboard text in `nova-input` (`InputState.text_entered`,
+      populated from winit `KeyEvent.text`, cleared each `end_frame`) — prerequisite
+      for a text-input widget, currently missing entirely
+- [ ] Thread `shift_held`/`text_entered` fields through `UiInput` (built in
+      `nova-app/src/main.rs`) so widgets can see modifier/keyboard state
+- [ ] Add a minimal text-input widget to `nova-ui` (`TextInputState` + focus
+      tracking on `EditorState`, click-to-focus/away-to-unfocus) and use it for the
+      "Highlight & Fix" instruction field (currently hardcoded to the literal
+      `"fix selection"`)
+- [ ] Add an `Inspectable` trait + component registry (new primitive in
+      `nova-ecs`/`nova-editor`) so the inspector can discover arbitrary component
+      types on an entity instead of two hardcoded `if let` checks for `Transform`/
+      `RigidBody2D`
+### Roadmap/vision follow-ups
+- [ ] PBR-material binding for `nova-neural-materials` (live video-LLM texture onto
+      an actual in-scene surface) — registry/upload exists, binding doesn't
+### Onboarding & adoption
+- [ ] Write a standalone agent-protocol reference doc (control-file schema,
+      telemetry schema) independent of reading `nova-agent-api`'s Rust source
+- [ ] Add at least one runnable example each to `nova-ecs`, `nova-render`, and
+      `nova-editor` (currently zero across all three)
+- [ ] Add a scaffolding helper (script or `xtask`) for forking `nova-sample-game`
+      into a new project, replacing the manual copy/rename-by-hand flow
+- [ ] Add example screenshots/a short clip to `GETTING_STARTED.md` (outstanding
+      `ALPHA_CHECKLIST.md` release-gate item; requires a manual capture step)
+### Innovative differentiator features (promoted from review discussion, 2026-07-15)
+- [ ] Wire the "Highlight & Fix" typed instruction (once the text-input widget
+      lands) to a real LLM call using `nova-rag` context, emitting an
+      `AgentCommand` batch through `nova-agent-api` — turns the scripted
+      `agent_fix_loop.rs` demo into a live, user-triggered fix from the viewport
+- [ ] Add a "propose" mode that renders an incoming `AgentCommand` batch as a
+      ghost/translucent preview (reusing existing gizmo rendering) with
+      accept/reject, before it's applied to the world
+- [ ] Add an agent-action log / explainability panel: let `AgentCommand`s carry
+      an optional rationale string and show the last N applied agent actions in
+      a small editor panel
+- [ ] Add telemetry scrubbing (a mini time-travel debugger): ring-buffer the
+      last N telemetry ticks and let the editor scrub backward through recent
+      world states, reusing the existing deterministic JSON/MessagePack
+      telemetry capture
+- [ ] Add an "explain this entity" clipboard export: package a selected
+      entity's component state + nearby `nova-rag` context into a prompt-ready
+      text block on the clipboard, for users without a wired-up agent yet
+- [ ] Add a `cargo xtask doctor` (or shell script) that checks GPU/driver/wgpu
+      backend availability and prints a readiness report before `cargo run -p
+      nova-app` — the most common first-run failure mode currently has no
+      diagnostics
+- [ ] Add autosave/restore-last-session: periodically autosave world state via
+      the existing `nova-scene` save/load and restore it on next launch (scene
+      state is currently in-memory only)
+- [ ] Add a task-oriented "cookbook" doc (recipes: add a new component +
+      inspector field; add a new gameplay script; ingest a custom mesh)
+      alongside the existing reference-style `GETTING_STARTED.md`
+
 ## Open Decisions
-- [x] Editor framework: **RESOLVED — egui/eframe (Rust-native immediate-mode)** over
-      Tauri/ImGui. Rationale: pure-Rust, integrates directly with the existing
-      winit+wgpu stack (egui-wgpu/egui-winit), no IPC boundary or C++ toolchain,
-      and its immediate-mode model matches the in-game `nova-ui` approach so tooling
-      and runtime UI can share concepts.
+- [x] Editor framework: **RESOLVED (updated 2026-07-15) — bespoke `nova-ui`
+      immediate-mode stack**, not egui/eframe. The original Phase-2 decision named
+      egui/eframe, but the Phase 6 implementation never took an egui/eframe
+      dependency: `nova-editor`'s panels are hand-rolled `Ui`/`DrawList` widgets
+      rendered by `nova-render`'s `UiOverlay` pass in `nova-app`'s winit+wgpu shell.
+      A 2026-07-15 platform review confirmed no egui/eframe dependency exists
+      anywhere in the workspace and the decision was reaffirmed as-is: the bespoke
+      stack is already working and well-tested, and it shares primitives with the
+      in-game `nova-ui` runtime UI, so a migration to egui/eframe was rejected in
+      favor of finishing out the bespoke stack's feature set instead (see Phase 7).
 - [x] MessagePack adoption: **RESOLVED — adopt now as an optional encoding** alongside
       JSON. Telemetry frames stay JSON by default (human/AI readable) with an opt-in
       MessagePack sink for high-frequency/large payloads via `rmp-serde`.

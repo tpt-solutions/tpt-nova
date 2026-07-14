@@ -44,15 +44,32 @@ You should see a window titled **"TPT Nova — Editor"** containing:
 | Key / mouse                       | Action                                         |
 |-----------------------------------|------------------------------------------------|
 | Click an entity in the viewport  | Select it (gizmo handle appears)              |
-| Drag in the viewport (Gizmo tool)| Move / rotate / scale the selection            |
+| Shift-click entity (viewport or Hierarchy) | Toggle it in the multi-selection    |
+| Drag in the viewport (Gizmo tool)| Move / rotate / scale the selection (undoable)|
+| Mouse wheel                       | Dolly the viewport camera (zoom)              |
+| Click an asset, then click viewport | Spawn that asset as a new entity            |
 | `G`                               | Cycle gizmo mode: Move → Rotate → Scale        |
 | `H`                               | Toggle the "Highlight & Fix" marquee tool     |
+| Click the instruction field (Highlight tool), then type | Set the fix request text (replaces the old hardcoded `"fix selection"`) |
 | Drag a marquee (Highlight tool)   | Select a region → builds an AI fix request     |
 | `P`                               | Toggle play / pause (simulation)              |
 | `E`                               | Toggle the editor UI off/on                   |
-| `Ctrl+Z` / `Ctrl+Y`               | Undo / redo inspector edits                    |
-| `Esc`                             | Clear selection                                |
+| `Ctrl+Z` / `Ctrl+Y`               | Undo / redo inspector **and** gizmo edits      |
+| `Esc`                             | Clear selection / unfocus the text field       |
 | WASD / arrows                     | (Cube) spin via the movement system            |
+
+There is also a **Vibe GUI** (Bézier curve editor) panel along the bottom of
+the viewport: drag its control points to shape a curve that maps to a gravity
+magnitude, and watch the live `gravity y` read-out update.
+
+> **Screenshots / clip:** A short capture of the running editor (the cube
+> viewport with the Hierarchy / Inspector / Assets / Vibe panels and the
+> Highlight & Fix marquee) is an outstanding `ALPHA_CHECKLIST.md` release-gate
+> item. It requires a **manual capture** step (run `cargo run -p nova-app` on a
+> machine with a GPU, then grab a frame) — drop the image here and reference it
+> once captured.
+>
+> ![TPT Nova editor](docs/editor_screenshot.png)
 
 The editor is fully wired to the renderer: every panel is a `nova-ui`
 `DrawList` composited over the 3D scene by `nova-render`'s `UiOverlay` pass, so
@@ -93,4 +110,7 @@ before opening a PR (see `CONTRIBUTING.md`).
 - Read the [README](README.md) for the crate map and the self-debugging loop.
 - Read [todo.md](todo.md) for the full roadmap and what "Alpha" means here.
 - The engine is AI-native: an external agent can read telemetry and hot-apply
-  changes via a control file — see `nova-agent-api`.
+  changes via a control file — see `nova-agent-api` and the
+  [Agent Protocol reference](docs/AGENT_PROTOCOL.md).
+- Want to build your own game on the engine? Fork the sample project instead of
+  copying it by hand: `pwsh scripts/fork_sample_game.ps1 -Name my-game`.

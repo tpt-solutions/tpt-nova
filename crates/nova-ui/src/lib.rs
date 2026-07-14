@@ -452,6 +452,47 @@ impl Ui {
         changed
     }
 
+    /// A minimal single-line text field.
+    ///
+    /// The bespoke UI is pointer-only, so this widget does **not** capture
+    /// keystrokes itself: it draws the current `text` (with a caret while
+    /// `focused`) and reports clicks via [`Response`]. The host owns the actual
+    /// `String` and edits it from keyboard events (see `nova-app`'s Highlight &
+    /// Fix instruction field, which feeds typed characters in each frame).
+    /// Returns the widget's [`Response`] so the host can toggle focus.
+    pub fn text_input(&mut self, label: &str, text: &str, focused: bool) -> Response {
+        let h = self.theme.line_height();
+        let size = Vec2::new(self.current().bounds.width(), h);
+        let rect = self.allocate(size);
+        let resp = self.interact(rect);
+
+        let bg = if focused {
+            self.theme.button_active
+        } else {
+            self.theme.button_bg
+        };
+        self.draw.push(DrawCommand::Rect {
+            rect,
+            color: bg,
+            rounding: 2.0,
+        });
+        let display = if focused {
+            format!("{text}▏")
+        } else {
+            text.to_string()
+        };
+        self.draw.push(DrawCommand::Text {
+            pos: Vec2::new(
+                rect.min.x + self.theme.padding,
+                rect.min.y + self.theme.padding * 0.5,
+            ),
+            text: format!("{label}: {display}"),
+            color: self.theme.text_color,
+            size: self.theme.text_size,
+        });
+        resp
+    }
+
     /// A horizontal slider mapping the pointer's x within the widget to a value
     /// in `[min, max]`. Reads the absolute pointer position, so it needs no host
     /// state and works for both clicks and drags. Returns true if `value`
@@ -699,5 +740,26 @@ mod tests {
         assert!(changed);
         // Pointer near the middle of the track should map to ~5.0.
         assert!(v > 4.0 && v < 6.0, "middle maps to ~5, got {v}");
+    }
+
+    #[test]
+    fn text_input_reports_focus_click_and_draws() {
+        // Clicking the field reports a click (host uses this to enter focus).
+        let input = UiInput {
+            pointer: Vec2::new(60.0, 56.0),
+            pointer_down: true,
+            pointer_pressed: true,
+        };
+        let mut ui = Ui::new(input);
+        ui.begin_panel(panel_rect(), None);
+        let resp = ui.text_input("Fix", "make it red", false);
+        ui.end_panel();
+        assert!(resp.clicked);
+
+        // Focused state should be reflected in the draw list (an extra text
+        // primitive is produced and the field is flagged via background color);
+        // at minimum the field must render without error.
+        let draw = ui.finish();
+        assert!(!draw.is_empty());
     }
 }

@@ -20,6 +20,7 @@
 //! an animated gradient, which is enough to prove the full round-trip end to
 //! end (prompt → frames → texture) in tests and in the headless demo.
 
+pub mod binding;
 pub mod frame;
 pub mod prompt;
 pub mod provider;
@@ -27,6 +28,7 @@ pub mod registry;
 pub mod source;
 pub mod texture;
 
+pub use binding::{MaterialBinding, MaterialBindings};
 pub use frame::{Frame, FrameError};
 pub use prompt::{FeedSource, MaterialPrompt};
 pub use provider::{MockProvider, NeuralMaterialProvider, ProviderError};
