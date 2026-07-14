@@ -11,3 +11,14 @@ nova-ecs = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "1"
+# Optional real local embedding model (neural, runs inference locally after a
+# one-time model download). Not in the default feature set so the offline
+# FeatureHashEmbedder remains the CI/default path.
+fastembed = { version = "3", optional = true }
+
+[features]
+default = []
+# Swaps in a real sentence-embedding model (fastembed's local All-MiniLM-L6-v2)
+# behind `RealEmbedder`. Enabling this downloads model weights on first use
+# (network required once); inference itself is fully local with no API calls.
+real-embeddings = ["dep:fastembed"]

@@ -33,6 +33,8 @@ pub enum PackError {
     UnsupportedVersion { found: u32 },
     #[error("serialization error: {0}")]
     Serde(#[from] serde_json::Error),
+    #[error("malformed pack entry: {detail}")]
+    Malformed { detail: String },
 }
 
 /// One entry in a packed archive: a file name and its raw bytes.
@@ -104,7 +106,31 @@ pub fn pack_to_file(entries: &[PackEntry], path: &Path) -> Result<(), PackError>
     Ok(())
 }
 
+/// Reject entry names that could be used for path traversal when a consumer
+/// writes a pack out to disk by name (absolute paths or `..` segments). Pack
+/// names are forward-slash separated and relative to the install root, so any
+/// name escaping that root is malformed.
+fn validate_entry_name(name: &str) -> Result<(), PackError> {
+    if name.is_empty() || name.starts_with('/') || name.starts_with('\\') {
+        return Err(PackError::Malformed {
+            detail: format!("illegal entry name: {name:?}"),
+        });
+    }
+    if name.split('/').any(|seg| seg == "..") {
+        return Err(PackError::Malformed {
+            detail: format!("path traversal in entry name: {name:?}"),
+        });
+    }
+    Ok(())
+}
+
 /// Parse a `.novapack` buffer back into entries.
+///
+/// The format is fully attacker-influenced (anyone can craft a `.novapack`), so
+/// every length prefix is bounds-checked against the remaining bytes *before*
+/// any allocation. A malicious `data_len` of `u64::MAX` can no longer trigger a
+/// multi-gigabyte allocation, and entry names are rejected if they try to escape
+/// the install root via `..` or absolute paths.
 pub fn unpack(bytes: &[u8]) -> Result<Vec<PackEntry>, PackError> {
     let mut cursor = bytes;
     let mut magic = [0u8; 8];
@@ -121,19 +147,36 @@ pub fn unpack(bytes: &[u8]) -> Result<Vec<PackEntry>, PackError> {
     let mut count = [0u8; 4];
     cursor.read_exact(&mut count)?;
     let count = u32::from_le_bytes(count);
+    // Guard against a pathological entry count before allocating the Vec.
+    if count > 10_000_000 {
+        return Err(PackError::Malformed {
+            detail: format!("entry count too large: {count}"),
+        });
+    }
 
     let mut entries = Vec::with_capacity(count as usize);
     for _ in 0..count {
         let mut name_len = [0u8; 2];
         cursor.read_exact(&mut name_len)?;
         let name_len = u16::from_le_bytes(name_len) as usize;
+        if name_len > cursor.len() {
+            return Err(PackError::Malformed {
+                detail: "entry name length exceeds remaining bytes".into(),
+            });
+        }
         let mut name = vec![0u8; name_len];
         cursor.read_exact(&mut name)?;
         let name = String::from_utf8_lossy(&name).into_owned();
+        validate_entry_name(&name)?;
 
         let mut data_len = [0u8; 8];
         cursor.read_exact(&mut data_len)?;
         let data_len = u64::from_le_bytes(data_len) as usize;
+        if data_len > cursor.len() {
+            return Err(PackError::Malformed {
+                detail: "entry data length exceeds remaining bytes".into(),
+            });
+        }
         let mut data = vec![0u8; data_len];
         cursor.read_exact(&mut data)?;
 
@@ -170,6 +213,11 @@ pub fn pack_directory(root: &Path, extensions: &[&str]) -> Result<Vec<PackEntry>
             .unwrap_or(&path)
             .to_string_lossy()
             .replace('\\', "/");
+        // Skip anything that would not be a safe relative entry name (a
+        // developer's own tree shouldn't contain these, but guard anyway).
+        if validate_entry_name(&rel).is_err() {
+            continue;
+        }
         let data = std::fs::read(&path)?;
         entries.push(PackEntry { name: rel, data });
     }
@@ -280,6 +328,41 @@ mod tests {
     #[test]
     fn unpack_rejects_bad_magic() {
         assert!(matches!(unpack(b"NOTAPACK0000"), Err(PackError::BadMagic)));
+    }
+
+    #[test]
+    fn unpack_rejects_oversized_data_len_without_allocating() {
+        // Craft a pack claiming a single entry with a multi-gigabyte data length
+        // but no payload. Before bounds-checking this would try to allocate
+        // ~4GiB; now it must be rejected as malformed using only the header.
+        let mut buf = Vec::new();
+        buf.extend_from_slice(MAGIC);
+        buf.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
+        buf.extend_from_slice(&1u32.to_le_bytes()); // count = 1
+        buf.extend_from_slice(&4u16.to_le_bytes()); // name len = 4
+        buf.extend_from_slice(b"x.bin");
+        buf.extend_from_slice(&u64::MAX.to_le_bytes()); // data len = huge
+        let err = unpack(&buf).unwrap_err();
+        assert!(
+            matches!(err, PackError::Malformed { .. }),
+            "must reject oversized data len, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn unpack_rejects_path_traversal_names() {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(MAGIC);
+        buf.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
+        buf.extend_from_slice(&1u32.to_le_bytes());
+        let name = "../../etc/passwd";
+        buf.extend_from_slice(&(name.len() as u16).to_le_bytes());
+        buf.extend_from_slice(name.as_bytes());
+        buf.extend_from_slice(&0u64.to_le_bytes());
+        assert!(matches!(
+            unpack(&buf),
+            Err(PackError::Malformed { .. })
+        ));
     }
 
     #[test]

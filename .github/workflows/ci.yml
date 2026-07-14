@@ -62,9 +62,11 @@ jobs:
   coverage:
     name: coverage (tarpaulin)
     runs-on: ubuntu-latest
-    # Coverage tooling is informational; don't fail the whole pipeline if the
-    # Linux-only coverage run has issues (e.g. a flaky cargo-install).
-    continue-on-error: true
+    # Coverage is now a soft gate: tarpaulin fails the job (and therefore the
+    # pipeline) if line coverage drops below the threshold, catching
+    # catastrophic regressions. The threshold is deliberately conservative
+    # because GPU-only paths cannot be exercised under CI; tune it in the
+    # `fail-under` flag below as coverage matures.
     steps:
       - uses: actions/checkout@v4
 
@@ -93,13 +95,15 @@ jobs:
       - name: Install cargo-tarpaulin
         run: cargo install cargo-tarpaulin --version "^0.31"
 
-      # Establish a coverage baseline by generating an lcov report. The count of
-      # covered lines is printed so regressions are visible in the job log; the
-      # report is uploaded as an artifact for downstream tooling.
+      # Establish a coverage baseline by generating an lcov report. Tarpaulin
+      # exits non-zero (failing the job) if coverage drops below `fail-under`,
+      # acting as a soft gate against regressions; the report is uploaded as an
+      # artifact for downstream tooling.
       - name: Run tarpaulin
         run: |
           cargo tarpaulin --workspace --out Lcov --output-dir coverage \
             --exclude-files "*/tests/*" "*/benches/*" \
+            --fail-under 15 \
             --timeout 300
           echo "## Coverage baseline (tarpaulin)" >> "$GITHUB_STEP_SUMMARY"
           if [ -f coverage/lcov.info ]; then

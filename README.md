@@ -41,7 +41,15 @@ physics-driven, game-ready runtimes.
 cargo build --workspace
 cargo test --workspace
 cargo run -p nova-sample-game   # runs the end-to-end pipeline headlessly
+cargo run -p nova-app           # opens the interactive editor (needs a GPU)
 ```
+
+`cargo run -p nova-app` opens a window with a live editor — a 3D viewport, a
+hierarchy/inspector/asset panel stack, and a toolbar. Drag in the viewport to
+move the selected entity, drag inspector fields to edit components live, press
+`H` then drag a marquee to build a "Highlight & Fix" AI request, and `P` to
+play/pause the simulation. See [GETTING_STARTED.md](GETTING_STARTED.md) for the
+full control list and clone-to-window walkthrough.
 
 The self-debugging loop: the engine emits telemetry (`nova-telemetry`) and
 hot-applies a control file written by an external AI agent

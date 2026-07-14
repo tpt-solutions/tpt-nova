@@ -87,6 +87,66 @@ pub fn tokenize(text: &str) -> Vec<String> {
         .collect()
 }
 
+/// A real, local neural embedding model backed by [`fastembed`].
+///
+/// Unlike [`FeatureHashEmbedder`] (a model-free bag-of-words baseline), this
+/// uses a genuine sentence-transformer — All-MiniLM-L6-v2 via `fastembed` —
+/// which captures *semantic* similarity, not just token overlap. Inference is
+/// fully local (no network at query time, no API calls); the only network use
+/// is a one-time model-weight download the first time [`RealEmbedder::new`] is
+/// called, which is why this lives behind the `real-embeddings` feature and is
+/// not the default embedder (the default must work offline under CI).
+///
+/// Production deployments that want meaningful retrieval should build their
+/// index with `Index::new(Box::new(RealEmbedder::new()?))`.
+#[cfg(feature = "real-embeddings")]
+pub struct RealEmbedder {
+    model: fastembed::TextEmbedding,
+}
+
+#[cfg(feature = "real-embeddings")]
+impl RealEmbedder {
+    /// Load the local embedding model. Downloads weights on first use.
+    pub fn new() -> Result<Self, fastembed::FastEmbedError> {
+        let model = fastembed::TextEmbedding::try_new(Default::default())?;
+        Ok(Self { model })
+    }
+}
+
+#[cfg(feature = "real-embeddings")]
+impl Embedder for RealEmbedder {
+    fn embed(&self, text: &str) -> Vec<f32> {
+        // All-MiniLM-L6-v2 outputs 384-dimensional vectors.
+        self.model
+            .embed(vec![text], None)
+            .ok()
+            .and_then(|batch| batch.into_iter().next())
+            .unwrap_or_default()
+    }
+
+    fn dim(&self) -> usize {
+        384
+    }
+}
+
+#[cfg(all(test, feature = "real-embeddings"))]
+mod real_embedder_tests {
+    use super::*;
+
+    #[test]
+    #[ignore = "downloads a model on first run; opt-in via --ignored"]
+    fn real_embedder_captures_semantics() {
+        let e = RealEmbedder::new().expect("load model");
+        assert_eq!(e.dim(), 384);
+        let a = e.embed("the quick brown fox jumps over the lazy dog");
+        let b = e.embed("a speedy auburn canine leaps above a sluggish hound");
+        let c = e.embed("the stock market rose three percent on Tuesday");
+        let sim_ab = cosine_similarity(&a, &b);
+        let sim_ac = cosine_similarity(&a, &c);
+        assert!(sim_ab > sim_ac, "semantic neighbours should score higher");
+    }
+}
+
 /// FNV-1a 64-bit hash — fast, dependency-free, deterministic.
 fn fnv1a(bytes: &[u8]) -> u64 {
     let mut hash: u64 = 0xcbf29ce484222325;

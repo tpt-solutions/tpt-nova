@@ -6,7 +6,10 @@
 //! the collider and auto-rig were produced and are simulated.
 //!
 //! Usage:
-//!   cargo run -p nova-ingest --bin ingest_demo -- path/to/model.glb
+//!   cargo run -p nova-ingest --bin ingest_demo [path/to/model.glb]
+//!
+//! With no argument it loads the shipped `assets/cube.glb` sample, so the demo
+//! is runnable zero-config.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -15,12 +18,23 @@ use nova_ecs::transform::Transform;
 use nova_ecs::{Vec3, World};
 use nova_ingest::{ingest, Collider3D, PhysicsWorld3D, RigidBody3D};
 
+fn default_asset() -> PathBuf {
+    // The committed sample lives at the workspace root's `assets/` directory.
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    manifest
+        .join("..")
+        .join("..")
+        .join("assets")
+        .join("cube.glb")
+}
+
 fn main() -> ExitCode {
     let path: PathBuf = match std::env::args().nth(1) {
         Some(p) => PathBuf::from(p),
         None => {
-            eprintln!("usage: ingest_demo <path-to-.glb/.gltf/.obj>");
-            return ExitCode::FAILURE;
+            let d = default_asset();
+            println!("no path given; using shipped sample: {}", d.display());
+            d
         }
     };
 

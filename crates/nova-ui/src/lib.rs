@@ -335,6 +335,170 @@ impl Ui {
     }
 }
 
+/// State for a horizontal drag widget (e.g. [`Ui::drag_float`]). The host
+/// owns one per active drag and passes it in each frame; the widget borrows
+/// it to remember where the drag started so it can apply a *relative* delta
+/// (the widget itself is rebuilt from scratch every frame in immediate
+/// mode, so the drag origin cannot live on the transient `Ui`).
+#[derive(Debug, Clone, Copy)]
+pub struct DragState {
+    pub active: bool,
+    start_pointer: Vec2,
+    start_value: f32,
+}
+
+impl Default for DragState {
+    fn default() -> Self {
+        DragState {
+            active: false,
+            start_pointer: Vec2::ZERO,
+            start_value: 0.0,
+        }
+    }
+}
+
+impl DragState {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl Ui {
+    // ---- Editable widgets ------------------------------------------------
+
+    /// A clickable checkbox that toggles `value` on the press edge. Returns true
+    /// if the value changed this frame.
+    pub fn checkbox(&mut self, label: &str, value: &mut bool) -> bool {
+        let h = self.theme.line_height();
+        let size = Vec2::new(self.current().bounds.width(), h);
+        let rect = self.allocate(size);
+        let resp = self.interact(rect);
+        if resp.clicked {
+            *value = !*value;
+        }
+        let box_size = h * 0.7;
+        self.draw.push(DrawCommand::Rect {
+            rect: Rect::from_min_size(rect.min, Vec2::new(box_size, box_size)),
+            color: if *value {
+                self.theme.button_active
+            } else {
+                self.theme.button_bg
+            },
+            rounding: 2.0,
+        });
+        self.draw.push(DrawCommand::Text {
+            pos: Vec2::new(
+                rect.min.x + box_size + self.theme.padding,
+                rect.min.y + self.theme.padding * 0.5,
+            ),
+            text: label.to_string(),
+            color: self.theme.text_color,
+            size: self.theme.text_size,
+        });
+        resp.clicked
+    }
+
+    /// A horizontally-draggable float. While the pointer is held inside the
+    /// widget (after a press), `value` changes by `speed` per pixel of horizontal
+    /// movement, relative to the drag origin captured on press. `drag` must be
+    /// owned by the host and passed every frame so the drag survives across
+    /// frames. Returns true if `value` changed this frame.
+    pub fn drag_float(
+        &mut self,
+        label: &str,
+        value: &mut f32,
+        speed: f32,
+        drag: &mut DragState,
+    ) -> bool {
+        let h = self.theme.line_height();
+        let size = Vec2::new(self.current().bounds.width(), h);
+        let rect = self.allocate(size);
+        let resp = self.interact(rect);
+
+        if resp.clicked {
+            drag.active = true;
+            drag.start_pointer = self.input.pointer;
+            drag.start_value = *value;
+        }
+        let mut changed = false;
+        if drag.active {
+            if self.input.pointer_down {
+                let nv = drag.start_value + (self.input.pointer.x - drag.start_pointer.x) * speed;
+                changed = (nv - *value).abs() > 1e-6;
+                *value = nv;
+            } else {
+                drag.active = false;
+            }
+        }
+
+        self.draw.push(DrawCommand::Text {
+            pos: Vec2::new(rect.min.x + self.theme.padding, rect.min.y + self.theme.padding * 0.5),
+            text: label.to_string(),
+            color: self.theme.text_color,
+            size: self.theme.text_size,
+        });
+        self.draw.push(DrawCommand::Text {
+            pos: Vec2::new(
+                rect.max.x - self.theme.text_width(&format!("{value:.3}")) - self.theme.padding,
+                rect.min.y + self.theme.padding * 0.5,
+            ),
+            text: format!("{value:.3}"),
+            color: self.theme.text_color,
+            size: self.theme.text_size,
+        });
+        changed
+    }
+
+    /// A horizontal slider mapping the pointer's x within the widget to a value
+    /// in `[min, max]`. Reads the absolute pointer position, so it needs no host
+    /// state and works for both clicks and drags. Returns true if `value`
+    /// changed this frame.
+    pub fn slider(&mut self, label: &str, value: &mut f32, min: f32, max: f32) -> bool {
+        let h = self.theme.line_height();
+        let size = Vec2::new(self.current().bounds.width(), h);
+        let rect = self.allocate(size);
+        let resp = self.interact(rect);
+
+        let mut changed = false;
+        if resp.held || resp.clicked {
+            let t = ((self.input.pointer.x - rect.min.x) / rect.width().max(1e-3)).clamp(0.0, 1.0);
+            let nv = min + t * (max - min);
+            changed = (nv - *value).abs() > 1e-6;
+            *value = nv;
+        }
+
+        // Track background.
+        let track = Rect::from_min_size(
+            Vec2::new(rect.min.x + self.theme.padding, rect.min.y + h * 0.5 - 2.0),
+            Vec2::new(rect.width() - self.theme.padding * 2.0, 4.0),
+        );
+        self.draw.push(DrawCommand::Rect {
+            rect: track,
+            color: self.theme.button_bg,
+            rounding: 2.0,
+        });
+        // Knob.
+        let t = if max > min {
+            ((*value - min) / (max - min)).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let knob_x = track.min.x + t * track.width();
+        self.draw.push(DrawCommand::Rect {
+            rect: Rect::from_min_size(Vec2::new(knob_x - 4.0, track.min.y - 2.0), Vec2::new(8.0, 8.0)),
+            color: self.theme.button_active,
+            rounding: 2.0,
+        });
+        self.draw.push(DrawCommand::Text {
+            pos: Vec2::new(rect.min.x + self.theme.padding, rect.min.y + self.theme.padding * 0.5),
+            text: format!("{label}: {value:.3}"),
+            color: self.theme.text_color,
+            size: self.theme.text_size,
+        });
+        changed
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -435,5 +599,96 @@ mod tests {
         // panel bg + button bg = 2 rects; button label = 1 text (no title bar).
         assert_eq!(rects, 2);
         assert_eq!(texts, 1);
+    }
+
+    #[test]
+    fn checkbox_toggles_on_click() {
+        let input = UiInput {
+            pointer: Vec2::new(60.0, 60.0),
+            pointer_down: true,
+            pointer_pressed: true,
+        };
+        let mut ui = Ui::new(input);
+        ui.begin_panel(panel_rect(), None);
+        let mut v = false;
+        let changed = ui.checkbox("on", &mut v);
+        ui.end_panel();
+        assert!(changed);
+        assert!(v);
+        // A second click toggles back off.
+        let input2 = UiInput {
+            pointer: Vec2::new(60.0, 60.0),
+            pointer_down: true,
+            pointer_pressed: true,
+        };
+        let mut ui2 = Ui::new(input2);
+        ui2.begin_panel(panel_rect(), None);
+        let changed2 = ui2.checkbox("on", &mut v);
+        ui2.end_panel();
+        assert!(changed2);
+        assert!(!v);
+    }
+
+    #[test]
+    fn drag_float_changes_value_relative_to_origin() {
+        // Press to begin the drag, then move +30px to the right while held.
+        let press = UiInput {
+            pointer: Vec2::new(60.0, 60.0),
+            pointer_down: true,
+            pointer_pressed: true,
+        };
+        let mut drag = DragState::new();
+        let mut v = 1.0f32;
+
+        let mut ui = Ui::new(press);
+        ui.begin_panel(panel_rect(), None);
+        let _ = ui.drag_float("x", &mut v, 0.1, &mut drag);
+        ui.end_panel();
+        assert!(drag.active, "drag should be active after a press inside");
+
+        let move_in = UiInput {
+            pointer: Vec2::new(90.0, 60.0),
+            pointer_down: true,
+            pointer_pressed: false,
+        };
+        let mut ui2 = Ui::new(move_in);
+        ui2.begin_panel(panel_rect(), None);
+        let changed = ui2.drag_float("x", &mut v, 0.1, &mut drag);
+        ui2.end_panel();
+        assert!(changed);
+        assert!(
+            (v - 4.0).abs() < 1e-3,
+            "value = start 1.0 + 30px * 0.1 = 4.0, got {v}"
+        );
+
+        // Releasing ends the drag.
+        let release = UiInput {
+            pointer: Vec2::new(90.0, 60.0),
+            pointer_down: false,
+            pointer_pressed: false,
+        };
+        let mut ui3 = Ui::new(release);
+        ui3.begin_panel(panel_rect(), None);
+        let _ = ui3.drag_float("x", &mut v, 0.1, &mut drag);
+        ui3.end_panel();
+        assert!(!drag.active);
+    }
+
+    #[test]
+    fn slider_maps_pointer_x_to_value() {
+        // First widget in an untitled panel_rect (40,40)+200 wide: x in [48,232].
+        let input = UiInput {
+            pointer: Vec2::new(140.0, 56.0),
+            pointer_down: true,
+            pointer_pressed: true,
+        };
+        let mut ui = Ui::new(input);
+        ui.begin_panel(panel_rect(), None);
+        let mut v = 0.0f32;
+        let changed = ui.slider("s", &mut v, 0.0, 10.0);
+        ui.end_panel();
+        assert!(changed);
+        // Pointer near the middle of the track should map to ~5.0.
+        assert!(v > 4.0 && v < 6.0, "middle maps to ~5, got {v}");
     }
 }

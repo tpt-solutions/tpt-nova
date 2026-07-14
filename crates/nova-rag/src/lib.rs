@@ -5,14 +5,17 @@
 //! then retrieve the most relevant chunks for a natural-language query. It is
 //! intentionally dependency-free of any external model — embeddings come from a
 //! pluggable [`Embedder`]; the crate ships a deterministic
-//! [`FeatureHashEmbedder`] (feature-hashing bag-of-words) so it works offline
-//! and under CI, and a production deployment can drop in a real sentence/model
-//! embedder behind the same trait.
+//! [`FeatureHashEmbedder`] (feature-hashing bag-of-words) as the offline default
+//! so it works under CI, and a production deployment can drop in a real local
+//! neural embedder via the `real-embeddings` feature ([`RealEmbedder`], which
+//! runs All-MiniLM-L6-v2 inference locally with no API calls).
 
 pub mod embed;
 pub mod index;
 
 pub use embed::{cosine_similarity, Embedder, FeatureHashEmbedder};
+#[cfg(feature = "real-embeddings")]
+pub use embed::RealEmbedder;
 pub use index::{Document, Index, RagAgent, ScoredHit, SearchError};
 
 /// Convenience: build an [`Index`] from a directory of text-like files.

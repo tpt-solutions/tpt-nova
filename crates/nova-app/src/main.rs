@@ -5,27 +5,47 @@
 //! AI agent can hot-apply changes by writing `nova-control.json`, which the
 //! engine polls each tick. Telemetry is dumped to `nova-telemetry.json` on an
 //! interval so the agent can observe and self-correct.
+//!
+//! On top of the 3D scene the engine now renders a live **editor UI** built from
+//! [`nova_ui`] draw lists and composited by [`nova_render`]'s `UiOverlay` pass:
+//! a hierarchy panel, a component inspector, an asset browser, a toolbar, and a
+//! 3D viewport where pointer drags drive the gizmo and a marquee drives the
+//! "Highlight & Fix" overlay. This is what makes the engine usable by a human,
+//! not just a set of logic layers.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use glam::EulerRot;
+use glam::{EulerRot, Vec2, Vec3};
 use nova_ecs::scheduler::Scheduler;
 use nova_ecs::transform::{Camera, GlobalTransform, Mesh, MeshKind, Transform};
-use nova_ecs::{Entity, Quat, Vec3, World};
+use nova_ecs::{Entity, Mat4, Quat, World};
+use nova_editor::{asset_browser_panel, hierarchy_panel, inspector_panel, EditorState};
 use nova_input::{default_action_map, ActionMap, InputState};
+use nova_overlay::{project_to_screen, SelectionTool};
 use nova_render::Renderer;
 use nova_telemetry::{FileSink, TelemetryEmitter};
+use nova_ui::{Color, DrawCommand, DrawList, Rect, Ui, UiInput};
 use serde::Deserialize;
 use winit::application::ApplicationHandler;
-use winit::event::WindowEvent as WinitWindowEvent;
+use winit::event::{ElementState, WindowEvent as WinitWindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::keyboard::{Key, ModifiersState};
 use winit::window::{Window, WindowAttributes};
 
 const FIXED_DT: f32 = 1.0 / 60.0;
 const TELEMETRY_INTERVAL: u64 = 30; // emit every 30 ticks (~0.5s)
 const CONTROL_PATH: &str = "nova-control.json";
+
+/// Which pointer tool is active in the 3D viewport.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ViewportTool {
+    /// Drag the selection with the translate/rotate/scale gizmo.
+    Gizmo,
+    /// Drag a rectangular "Highlight & Fix" marquee to build an AI fix request.
+    Highlight,
+}
 
 /// Tracks the simulation tick for systems and telemetry.
 #[derive(Debug, Clone)]
@@ -47,6 +67,47 @@ struct RotationXYZ {
     z: f32,
 }
 
+/// Panel layout (in window pixels) for the editor chrome. Pure so it can be
+/// unit-tested without a window.
+pub(crate) fn editor_layout(size: (u32, u32)) -> EditorLayout {
+    let w = size.0 as f32;
+    let h = size.1 as f32;
+    EditorLayout {
+        toolbar: Rect::from_min_size(Vec2::ZERO, Vec2::new(w, 30.0)),
+        hierarchy: Rect::from_min_size(Vec2::new(8.0, 38.0), Vec2::new(260.0, h - 196.0)),
+        inspector: Rect::from_min_size(Vec2::new(w - 300.0, 38.0), Vec2::new(284.0, h - 46.0)),
+        assets: Rect::from_min_size(Vec2::new(8.0, h - 150.0), Vec2::new(260.0, 140.0)),
+        // The interactive 3D region: the full window minus the side/bottom panels.
+        viewport: Rect::from_min_size(
+            Vec2::new(280.0, 38.0),
+            Vec2::new((w - 600.0).max(1.0), h - 46.0),
+        ),
+    }
+}
+
+/// Editor chrome rectangles in window pixel space.
+pub(crate) struct EditorLayout {
+    toolbar: Rect,
+    hierarchy: Rect,
+    inspector: Rect,
+    assets: Rect,
+    viewport: Rect,
+}
+
+impl EditorLayout {
+    /// True if a window-space pointer is over any editor panel (and therefore
+    /// should not be treated as a 3D viewport interaction). Anything outside the
+    /// central viewport rectangle (the gutters between panels) also counts as
+    /// non-interactive so clicks there don't fall through to the 3D scene.
+    fn over_panel(&self, p: Vec2) -> bool {
+        !self.viewport.contains(p)
+            || self.toolbar.contains(p)
+            || self.hierarchy.contains(p)
+            || self.inspector.contains(p)
+            || self.assets.contains(p)
+    }
+}
+
 struct App {
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
@@ -62,6 +123,27 @@ struct App {
     #[allow(dead_code)]
     telemetry_path: PathBuf,
     control_path: String,
+
+    // ---- Editor state ----------------------------------------------------
+    editor_enabled: bool,
+    editor: EditorState,
+    tool: ViewportTool,
+    /// 3D gizmo mode (Move/Rotate/Scale), independent of the 2D editor's mode.
+    gizmo_mode: nova_editor::GizmoMode3D,
+    overlay: SelectionTool,
+    /// Live window-space pointer (pixels, y-down).
+    pointer: Vec2,
+    pointer_down: bool,
+    /// A press edge that is true for exactly the frame after a mouse-down.
+    pointer_pressed: bool,
+    /// Window size in pixels, kept in sync with `Resized`.
+    viewport_size: (u32, u32),
+    /// Current keyboard modifier state (tracked via `ModifiersChanged`).
+    modifiers: ModifiersState,
+    /// Active gizmo drag: (start pointer, entity).
+    gizmo_drag: Option<(Vec2, Entity)>,
+    /// The most recent "Highlight & Fix" request, kept for display.
+    last_fix: Option<nova_overlay::AiFixRequest>,
 }
 
 impl App {
@@ -102,6 +184,10 @@ impl App {
         scheduler.add_system(move |w: &mut World| movement_system(w, cube_e));
         scheduler.add_system(move |w: &mut World| nova_ecs::scene_graph::propagate_transforms(w));
 
+        let mut editor = EditorState::new();
+        editor.add_asset("cube.glb", "mesh");
+        editor.add_asset("park.splat", "splat");
+
         App {
             window: None,
             renderer: None,
@@ -118,6 +204,18 @@ impl App {
             control_mtime: None,
             telemetry_path,
             control_path,
+            editor_enabled: true,
+            editor,
+            tool: ViewportTool::Gizmo,
+            gizmo_mode: nova_editor::GizmoMode3D::Move,
+            overlay: SelectionTool::new(),
+            pointer: Vec2::ZERO,
+            pointer_down: false,
+            pointer_pressed: false,
+            viewport_size: (1280, 720),
+            modifiers: ModifiersState::empty(),
+            gizmo_drag: None,
+            last_fix: None,
         }
     }
 
@@ -127,6 +225,53 @@ impl App {
             PathBuf::from("nova-telemetry.json"),
             CONTROL_PATH.to_string(),
         )
+    }
+
+    /// Compute the camera view-projection (and its inverse + forward) for the
+    /// current world, matching what [`nova_render`] uses so gizmo math lines up
+    /// with the rendered scene. Returns `None` when there is no camera.
+    fn camera_matrices(&self) -> Option<(Mat4, Mat4, Vec3)> {
+        let aspect = self.viewport_size.0 as f32 / self.viewport_size.1.max(1) as f32;
+        let mut found = None;
+        for (_e, cam, gt) in self
+            .world
+            .query_2::<Camera, GlobalTransform>()
+            .into_iter()
+        {
+            let mut proj = *cam;
+            proj.aspect = aspect;
+            let view = gt.0.inverse();
+            let vp = proj.perspective() * view;
+            let forward = gt.0.transform_vector3(Vec3::NEG_Z).normalize();
+            found = Some((vp, vp.inverse(), forward));
+            break;
+        }
+        found
+    }
+
+    /// Pick the entity whose projected center is nearest the window pointer
+    /// (within `radius` pixels), used for click-to-select in the viewport.
+    fn pick_entity(&self, vp: Mat4, radius: f32) -> Option<Entity> {
+        let mut best: Option<(f32, Entity)> = None;
+        for (e, _t, gt) in self
+            .world
+            .query_2::<Transform, GlobalTransform>()
+            .into_iter()
+        {
+            if let Some((sx, sy)) =
+                project_to_screen(gt.translation(), vp, self.viewport_size)
+            {
+                let d = ((sx as f32 - self.pointer.x).powi(2)
+                    + (sy as f32 - self.pointer.y).powi(2))
+                .sqrt();
+                if d <= radius {
+                    if best.map(|(bd, _)| d < bd).unwrap_or(true) {
+                        best = Some((d, e));
+                    }
+                }
+            }
+        }
+        best.map(|(_, e)| e)
     }
 
     fn step(&mut self) {
@@ -140,6 +285,24 @@ impl App {
 
         self.scheduler.run(&mut self.world);
 
+        self.emit_and_tick();
+    }
+
+    /// A "paused" simulation step for play-in-editor: still hot-applies external
+    /// control and keeps transforms propagated (so gizmo edits show) but does not
+    /// run gameplay systems.
+    fn step_paused(&mut self) {
+        apply_control(
+            &mut self.world,
+            self.cube,
+            &mut self.control_mtime,
+            &self.control_path,
+        );
+        nova_ecs::scene_graph::propagate_transforms(&mut self.world);
+        self.emit_and_tick();
+    }
+
+    fn emit_and_tick(&mut self) {
         let tick = {
             let t = self.world.resource_mut::<TickResource>().unwrap();
             t.tick += 1;
@@ -162,19 +325,278 @@ impl App {
 
         let (accumulator, steps) = accumulate_fixed_steps(self.accumulator, elapsed, FIXED_DT);
         self.accumulator = accumulator;
+
+        // While editing with the sim paused, keep transforms fresh but skip
+        // gameplay. Otherwise run the full deterministic schedule.
+        let simulate = !(self.editor_enabled && !self.editor.playing);
         for _ in 0..steps {
-            self.step();
+            if simulate {
+                self.step();
+            } else {
+                self.step_paused();
+            }
         }
 
+        // Continuous gizmo drag: apply the live delta every frame the button is
+        // held over the selection.
+        if let Some((start, entity)) = self.gizmo_drag {
+                if let Some((_vp, inv_vp, forward)) = self.camera_matrices() {
+                let size = self.viewport_size;
+                nova_editor::apply_gizmo_3d(
+                    &mut self.world,
+                    entity,
+                    self.gizmo_mode,
+                    inv_vp,
+                    (size.0 as f32, size.1 as f32),
+                    forward,
+                    start,
+                    self.pointer,
+                    0.0,
+                );
+            }
+        }
+
+        // Build the editor draw list and composite it over the 3D scene.
+        let draw = if self.editor_enabled {
+            self.build_editor_ui()
+        } else {
+            DrawList::new()
+        };
+
         if let Some(renderer) = self.renderer.as_mut() {
-            if let Err(e) = renderer.render(&self.world) {
+            if let Err(e) = renderer.render_with_ui(&self.world, &draw) {
                 log::error!("render error: {e}");
             }
         }
 
-        // Clear per-frame input deltas.
+        // Per-frame input deltas + the one-frame press edge.
         if let Some(input) = self.world.resource_mut::<InputState>() {
             input.end_frame();
+        }
+        self.pointer_pressed = false;
+    }
+
+    /// Build the full editor `DrawList`: toolbar + panels + gizmo handles +
+    /// highlight marquee. Also wires toolbar button clicks to editor actions.
+    fn build_editor_ui(&mut self) -> DrawList {
+        let layout = editor_layout(self.viewport_size);
+        let input = UiInput {
+            pointer: self.pointer,
+            pointer_down: self.pointer_down,
+            pointer_pressed: self.pointer_pressed,
+        };
+
+        let mut draw: DrawList = Vec::new();
+
+        // ---- Toolbar (interactive) ---------------------------------------
+        draw.extend(self.build_toolbar(layout.toolbar, input));
+
+        // ---- Hierarchy / inspector / asset panels (self-handling) ---------
+        draw.extend(hierarchy_panel(&self.world, &mut self.editor, input, layout.hierarchy));
+        draw.extend(inspector_panel(&mut self.world, &mut self.editor, input, layout.inspector));
+        draw.extend(asset_browser_panel(&mut self.editor, input, layout.assets));
+
+        // ---- Gizmo handles for the current selection ----------------------
+        if self.tool == ViewportTool::Gizmo {
+            if let Some(sel) = self.editor.selected {
+                if let Some((vp, _, _)) = self.camera_matrices() {
+                    if let Some((sx, sy)) =
+                        project_to_screen(self.selection_center(sel), vp, self.viewport_size)
+                    {
+                        draw.push(DrawCommand::Rect {
+                            rect: Rect::from_min_size(
+                                Vec2::new(sx as f32 - 6.0, sy as f32 - 6.0),
+                                Vec2::new(12.0, 12.0),
+                            ),
+                            color: Color::rgb(0.2, 0.9, 0.3),
+                            rounding: 2.0,
+                        });
+                    }
+                }
+            }
+        }
+
+        // ---- Highlight & Fix marquee -------------------------------------
+        if self.tool == ViewportTool::Highlight {
+            if let Some(rect) = self.overlay.current_rect(self.viewport_size) {
+                draw.push(DrawCommand::Rect {
+                    rect: Rect::from_min_size(
+                        Vec2::new(rect.x0 as f32, rect.y0 as f32),
+                        Vec2::new(rect.width() as f32, rect.height() as f32),
+                    ),
+                    color: Color::rgba(0.2, 1.0, 0.4, 0.35),
+                    rounding: 0.0,
+                });
+            }
+        }
+
+        draw
+    }
+
+    /// The world-space center of `entity` for gizmo handle placement.
+    fn selection_center(&self, entity: Entity) -> Vec3 {
+        self.world
+            .get_component::<GlobalTransform>(entity)
+            .map(|gt| gt.translation())
+            .or_else(|| self.world.get_component::<Transform>(entity).map(|t| t.translation))
+            .unwrap_or(Vec3::ZERO)
+    }
+
+    /// Build the top toolbar and perform actions when its buttons are clicked.
+    fn build_toolbar(&mut self, area: Rect, input: UiInput) -> DrawList {
+        let mut ui = Ui::new(input);
+        ui.begin_panel(area, Some("TPT Nova — Editor"));
+
+        let mut enabled = self.editor_enabled;
+        let _ = ui.checkbox("Editor", &mut enabled);
+        if enabled != self.editor_enabled {
+            self.editor_enabled = enabled;
+        }
+
+        let mode_label = match self.gizmo_mode {
+            nova_editor::GizmoMode3D::Move => "Gizmo: Move",
+            nova_editor::GizmoMode3D::Rotate => "Gizmo: Rotate",
+            nova_editor::GizmoMode3D::Scale => "Gizmo: Scale",
+        };
+        let mode_resp = ui.button(mode_label);
+        if mode_resp.clicked {
+            self.gizmo_mode = match self.gizmo_mode {
+                nova_editor::GizmoMode3D::Move => nova_editor::GizmoMode3D::Rotate,
+                nova_editor::GizmoMode3D::Rotate => nova_editor::GizmoMode3D::Scale,
+                nova_editor::GizmoMode3D::Scale => nova_editor::GizmoMode3D::Move,
+            };
+        }
+
+        let tool_label = match self.tool {
+            ViewportTool::Gizmo => "Tool: Gizmo",
+            ViewportTool::Highlight => "Tool: Highlight",
+        };
+        let tool_resp = ui.button(tool_label);
+        if tool_resp.clicked {
+            self.tool = match self.tool {
+                ViewportTool::Gizmo => ViewportTool::Highlight,
+                ViewportTool::Highlight => ViewportTool::Gizmo,
+            };
+        }
+
+        let mut playing = self.editor.playing;
+        let play_label = if playing { "Pause" } else { "Play" };
+        let play_resp = ui.button(play_label);
+        if play_resp.clicked {
+            playing = !playing;
+            self.editor.playing = playing;
+        }
+
+        let undo_resp = ui.button("Undo");
+        if undo_resp.clicked {
+            self.editor.history.undo(&mut self.world);
+        }
+        let redo_resp = ui.button("Redo");
+        if redo_resp.clicked {
+            self.editor.history.redo(&mut self.world);
+        }
+
+        if let Some(fix) = &self.last_fix {
+            ui.label(&format!("fix: {} ent", fix.entity_ids.len()));
+        } else {
+            ui.label("keys: E edit · G gizmo · H highlight · P play · Ctrl+Z undo");
+        }
+
+        ui.end_panel();
+        ui.finish()
+    }
+
+    /// Begin a pointer interaction (mouse-down) given the current window state.
+    fn on_pointer_press(&mut self) {
+        if !self.editor_enabled {
+            return;
+        }
+        let layout = editor_layout(self.viewport_size);
+        if layout.over_panel(self.pointer) {
+            return; // let the panel UI consume the click
+        }
+        match self.tool {
+            ViewportTool::Gizmo => {
+                // Select if nothing is selected; otherwise start a gizmo drag.
+                if let Some((vp, _, _)) = self.camera_matrices() {
+                    if self.editor.selected.is_none() {
+                        if let Some(e) = self.pick_entity(vp, 40.0) {
+                            self.editor.select(e);
+                        }
+                    }
+                    if let Some(sel) = self.editor.selected {
+                        self.gizmo_drag = Some((self.pointer, sel));
+                    }
+                }
+            }
+            ViewportTool::Highlight => {
+                let (x, y) = (self.pointer.x as u32, self.pointer.y as u32);
+                self.overlay.begin(x, y);
+            }
+        }
+    }
+
+    /// End a pointer interaction (mouse-up).
+    fn on_pointer_release(&mut self) {
+        self.gizmo_drag = None;
+        if self.tool == ViewportTool::Highlight {
+            let (x, y) = (self.pointer.x as u32, self.pointer.y as u32);
+            self.overlay.drag(x, y);
+            if let Some((vp, _, _)) = self.camera_matrices() {
+                if let Ok(req) = self
+                    .overlay
+                    .build_request(&self.world, vp, self.viewport_size, "fix selection")
+                {
+                    log::info!("Highlight & Fix request:\n{}", req.prompt);
+                    self.last_fix = Some(req);
+                }
+            }
+        }
+    }
+
+    fn handle_key(&mut self, key: &Key, pressed: bool) {
+        if !pressed {
+            return;
+        }
+        let ctrl = self.modifiers.control_key();
+        let shift = self.modifiers.shift_key();
+        let ch = match key {
+            Key::Character(c) => Some(c.to_string()),
+            _ => None,
+        };
+        if ctrl {
+            match ch.as_deref() {
+                Some("z") if shift => {
+                    self.editor.history.redo(&mut self.world);
+                }
+                Some("z") => {
+                    self.editor.history.undo(&mut self.world);
+                }
+                Some("y") => {
+                    self.editor.history.redo(&mut self.world);
+                }
+                _ => {}
+            }
+            return;
+        }
+        match ch.as_deref() {
+            Some("e") => self.editor_enabled = !self.editor_enabled,
+            Some("g") => {
+                self.gizmo_mode = match self.gizmo_mode {
+                    nova_editor::GizmoMode3D::Move => nova_editor::GizmoMode3D::Rotate,
+                    nova_editor::GizmoMode3D::Rotate => nova_editor::GizmoMode3D::Scale,
+                    nova_editor::GizmoMode3D::Scale => nova_editor::GizmoMode3D::Move,
+                };
+            }
+            Some("h") => {
+                self.tool = match self.tool {
+                    ViewportTool::Gizmo => ViewportTool::Highlight,
+                    ViewportTool::Highlight => ViewportTool::Gizmo,
+                };
+            }
+            Some("p") => self.editor.toggle_play(),
+            Some("Escape") => self.editor.clear_selection(),
+            _ => {}
         }
     }
 }
@@ -270,11 +692,15 @@ impl ApplicationHandler for App {
             return;
         }
         let attrs = WindowAttributes::default()
-            .with_title("TPT Nova — Phase 1")
+            .with_title("TPT Nova — Editor")
             .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 720.0));
         let window = Arc::new(event_loop.create_window(attrs).expect("create window"));
 
         let renderer = Renderer::new(Arc::clone(&window)).expect("init renderer");
+        self.viewport_size = (
+            window.inner_size().width.max(1),
+            window.inner_size().height.max(1),
+        );
         self.window = Some(Arc::clone(&window));
         self.renderer = Some(renderer);
         self.last_time = Instant::now();
@@ -295,14 +721,43 @@ impl ApplicationHandler for App {
                 if let Some(renderer) = self.renderer.as_mut() {
                     renderer.resize(size.width.max(1), size.height.max(1));
                 }
+                self.viewport_size = (size.width.max(1), size.height.max(1));
             }
             WinitWindowEvent::RedrawRequested => {
                 self.render_frame();
             }
-            WinitWindowEvent::KeyboardInput { .. }
-            | WinitWindowEvent::CursorMoved { .. }
-            | WinitWindowEvent::MouseInput { .. }
-            | WinitWindowEvent::MouseWheel { .. } => {
+            WinitWindowEvent::KeyboardInput { event: ref key_event, .. } => {
+                if let Some(input) = self.world.resource_mut::<InputState>() {
+                    input.apply_event(&event);
+                }
+                if key_event.state == ElementState::Pressed {
+                    self.handle_key(&key_event.logical_key, true);
+                }
+            }
+            WinitWindowEvent::ModifiersChanged(mods) => {
+                self.modifiers = mods.state();
+            }
+            WinitWindowEvent::CursorMoved { position, .. } => {
+                self.pointer = Vec2::new(position.x as f32, position.y as f32);
+                if let Some(input) = self.world.resource_mut::<InputState>() {
+                    input.apply_event(&event);
+                }
+            }
+            WinitWindowEvent::MouseInput { state, .. } => {
+                let down = state == ElementState::Pressed;
+                if down {
+                    self.pointer_pressed = true;
+                    self.pointer_down = true;
+                    self.on_pointer_press();
+                } else {
+                    self.pointer_down = false;
+                    self.on_pointer_release();
+                }
+                if let Some(input) = self.world.resource_mut::<InputState>() {
+                    input.apply_event(&event);
+                }
+            }
+            WinitWindowEvent::MouseWheel { .. } => {
                 if let Some(input) = self.world.resource_mut::<InputState>() {
                     input.apply_event(&event);
                 }
@@ -341,6 +796,7 @@ mod tests {
     use nova_ecs::transform::{GlobalTransform, Mesh, Transform};
     use nova_ecs::{Quat, World};
     use nova_input::{default_action_map, ActionMap, InputState};
+    use nova_ui::DrawList;
 
     // ---- App shell init (headless, no window/GPU) -------------------------
 
@@ -569,5 +1025,49 @@ mod tests {
             .any(|e| e["components"].get("Camera").is_some()));
 
         let _ = std::fs::remove_file(&telemetry);
+    }
+
+    // ---- Editor wiring (headless: builds a DrawList without a GPU) --------
+
+    #[test]
+    fn editor_ui_builds_nonempty_draw_list() {
+        let mut app = App::new(0xBEEF);
+        app.viewport_size = (1280, 720);
+        let draw: DrawList = app.build_editor_ui();
+        // Toolbar + hierarchy + inspector + asset panels each emit primitives.
+        assert!(!draw.is_empty(), "editor must produce drawable primitives");
+    }
+
+    #[test]
+    fn editor_layout_excludes_panels_from_viewport() {
+        let l = editor_layout((1280, 720));
+        // The corner of the hierarchy panel is over a panel, not the viewport.
+        assert!(l.over_panel(Vec2::new(20.0, 60.0)));
+        // The center of the viewport region is not over any panel.
+        let center = (l.viewport.min + l.viewport.max) * 0.5;
+        assert!(!l.over_panel(center), "viewport center must be interactive");
+    }
+
+    #[test]
+    fn toggle_keys_change_editor_state() {
+        let mut app = App::new(0x5A);
+        let key = |s: &str| Key::Character(s.into());
+        let pressed = true;
+
+        let before = app.editor_enabled;
+        app.handle_key(&key("e"), pressed);
+        assert_ne!(app.editor_enabled, before);
+
+        let m0 = app.gizmo_mode;
+        app.handle_key(&key("g"), pressed);
+        assert_ne!(app.gizmo_mode, m0);
+
+        let t0 = app.tool;
+        app.handle_key(&key("h"), pressed);
+        assert_ne!(app.tool, t0);
+
+        let p0 = app.editor.playing;
+        app.handle_key(&key("p"), pressed);
+        assert_ne!(app.editor.playing, p0);
     }
 }

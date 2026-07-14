@@ -192,6 +192,98 @@ pub fn build_fix_request(
 /// Bring `Vec4::from_point` into scope without a direct glam dependency leak.
 use glam::Vec4;
 
+/// Interactive "Highlight & Fix" selection tool.
+///
+/// The host feeds raw pointer events (press / move / release) in viewport pixel
+/// coordinates; the tool tracks the drag marquee and, on release, assembles an
+/// [`AiFixRequest`] for the highlighted region. It owns no GPU state and is fully
+/// unit-testable — the renderer just needs [`SelectionTool::current_rect`] to
+/// draw the live rectangle each frame.
+#[derive(Debug, Clone, Default)]
+pub struct SelectionTool {
+    dragging: bool,
+    start: Option<(u32, u32)>,
+    current: Option<(u32, u32)>,
+    last_request: Option<AiFixRequest>,
+}
+
+impl SelectionTool {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// True while a marquee drag is in progress.
+    pub fn is_dragging(&self) -> bool {
+        self.dragging
+    }
+
+    /// Pointer press: begin a new selection at `(x, y)` (viewport pixels).
+    pub fn begin(&mut self, x: u32, y: u32) {
+        self.dragging = true;
+        self.start = Some((x, y));
+        self.current = Some((x, y));
+    }
+
+    /// Pointer move: update the far corner of the marquee while dragging.
+    pub fn drag(&mut self, x: u32, y: u32) {
+        if self.dragging {
+            self.current = Some((x, y));
+        }
+    }
+
+    /// Pointer release: finish the drag and return the completed marquee rect
+    /// (normalized so the start corner is top-left), or `None` if the drag was
+    /// not valid (no start, or zero area is handled by the caller).
+    pub fn end(&mut self) -> Option<ScreenRect> {
+        if !self.dragging {
+            return None;
+        }
+        self.dragging = false;
+        let (a, b) = match (self.start, self.current) {
+            (Some(a), Some(b)) => (a, b),
+            _ => return None,
+        };
+        if a == b {
+            return None;
+        }
+        Some(ScreenRect::new(a, b))
+    }
+
+    /// The live marquee rectangle for the current drag, in viewport pixels.
+    /// Returns `None` when not dragging or before the first move.
+    pub fn current_rect(&self, _size: (u32, u32)) -> Option<ScreenRect> {
+        match (self.start, self.current) {
+            (Some(a), Some(b)) if self.dragging => Some(ScreenRect::new(a, b)),
+            _ => None,
+        }
+    }
+
+    /// The most recently built fix request (kept so the UI can show what was
+    /// last sent even after the marquee is cleared).
+    pub fn last_request(&self) -> Option<&AiFixRequest> {
+        self.last_request.as_ref()
+    }
+
+    /// Finish the current drag (if any) and build the agent fix request for the
+    /// highlighted region. Equivalent to [`end`] followed by
+    /// [`build_fix_request`]; the resulting request is cached via
+    /// [`last_request`].
+    pub fn build_request(
+        &mut self,
+        world: &World,
+        view_proj: Mat4,
+        size: (u32, u32),
+        instruction: &str,
+    ) -> Result<AiFixRequest, OverlayError> {
+        let region = self
+            .end()
+            .ok_or(OverlayError::EmptyRegion)?;
+        let req = build_fix_request(world, view_proj, size, region, instruction)?;
+        self.last_request = Some(req.clone());
+        Ok(req)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -305,5 +397,43 @@ mod tests {
         let region = ScreenRect::new((350, 250), (450, 350));
         let hits = pick_entities_in_region(&world, vp, size, region);
         assert!(hits.is_empty());
+    }
+
+    #[test]
+    fn selection_tool_tracks_marquee_and_builds_request() {
+        let (mut world, vp, size) = camera_view_proj();
+        let e = world.spawn();
+        world.add_component(e, Transform::from_translation(Vec3::ZERO));
+        world.add_component(e, GlobalTransform::identity());
+
+        let mut tool = SelectionTool::new();
+        assert!(!tool.is_dragging());
+        tool.begin(360, 260);
+        assert!(tool.is_dragging());
+        // While dragging, the live rect tracks start + current.
+        tool.drag(440, 340);
+        let live = tool.current_rect(size).expect("live rect during drag");
+        assert_eq!((live.x0, live.y0, live.x1, live.y1), (360, 260, 440, 340));
+
+        // Release builds a fix request for the highlighted region.
+        let req = tool
+            .build_request(&world, vp, size, "make it red")
+            .unwrap();
+        assert_eq!(req.entity_ids, vec![format!("{e}")]);
+        assert!(req.prompt.contains("make it red"));
+        assert!(!tool.is_dragging());
+        assert!(tool.last_request().is_some());
+    }
+
+    #[test]
+    fn selection_tool_rejects_empty_drag() {
+        let (world, vp, size) = camera_view_proj();
+        let mut tool = SelectionTool::new();
+        tool.begin(100, 100);
+        tool.drag(100, 100); // no movement -> zero-area on release
+        assert!(matches!(
+            tool.build_request(&world, vp, size, "x"),
+            Err(OverlayError::EmptyRegion)
+        ));
     }
 }

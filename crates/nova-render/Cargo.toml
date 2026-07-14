@@ -8,6 +8,7 @@ description = "wgpu-based rendering for TPT Nova"
 
 [dependencies]
 nova-ecs = { workspace = true }
+nova-ui = { workspace = true }
 wgpu = "30"
 winit = "0.30"
 glam = { version = "0.29", features = ["bytemuck"] }

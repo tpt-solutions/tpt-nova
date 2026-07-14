@@ -288,6 +288,11 @@ pub struct ControlChannel {
     applied_count: u64,
 }
 
+/// Maximum control file size we will read. A control file is written by an
+/// external (potentially untrusted) agent; capping it prevents a hostile or
+/// corrupt multi-gigabyte file from exhausting memory when polled.
+const MAX_CONTROL_FILE_BYTES: u64 = 1u64 << 20; // 1 MiB
+
 impl ControlChannel {
     pub fn new<P: AsRef<Path>>(path: P) -> Self {
         ControlChannel {
@@ -303,12 +308,19 @@ impl ControlChannel {
     }
 
     /// Poll the control file. Returns the number of commands applied this call
-    /// (0 if unchanged or absent). Rejects protocol-version mismatches.
+    /// (0 if unchanged or absent). Rejects protocol-version mismatches and
+    /// oversized files.
     pub fn poll(&mut self, world: &mut World) -> Result<u32, AgentApiError> {
         let meta = match std::fs::metadata(&self.path) {
             Ok(m) => m,
             Err(_) => return Ok(0),
         };
+        if meta.len() > MAX_CONTROL_FILE_BYTES {
+            return Err(AgentApiError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "control file exceeds maximum allowed size",
+            )));
+        }
         let mtime = meta
             .modified()
             .ok()

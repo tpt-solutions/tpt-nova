@@ -184,6 +184,47 @@ networking/multiplayer (see Open Decisions).
 - [x] End-to-end integration test spanning multiple crates (ECS + physics + telemetry tick, asserting deterministic output)
 - [x] Regression test harness for the AI code-injection loop (telemetry read -> mutate -> hot-apply -> verify)
 
+## Phase 6: Editor Integration, Onboarding & Agent-Loop Closure (post-Alpha review, 2026-07-14)
+Phase 5 marked every checklist item done, but a platform review on 2026-07-14 found
+that "Alpha" status hides a real gap: `nova-ui`/`nova-editor`/`nova-overlay` are
+tested logic layers with no GPU-rendered surface tying them into `nova-app`, so the
+engine has no interactive GUI usable by a human today. This phase tracks closing
+that gap plus onboarding and agent-loop follow-ups surfaced in the same review.
+### UI/Editor backend (top priority)
+- [ ] Wire `nova-ui`'s `DrawList` into an actual render pass in `nova-render`/`nova-app`
+      (or adopt egui directly, per the already-resolved Open Decision) so the editor
+      is visible/usable by a human, not just logic
+- [ ] Add editable inspector widgets (drag-float, checkbox, etc.) to `nova-editor` so
+      the inspector panel can write component values, not just display them
+- [ ] Add a minimal viewport panel in `nova-app` that feeds pointer-drag deltas into
+      the existing 2D/3D gizmo math, and draw on-screen gizmo handles
+- [ ] Add undo/redo and multi-select to `EditorState`
+- [ ] Add an asset browser panel and a play-in-editor toggle
+- [ ] Wire `nova-overlay`'s highlight-rectangle picking into an actual drawn/interactive
+      rectangle in the viewport (currently logic-only)
+### Onboarding & adoption
+- [ ] Add a `GETTING_STARTED.md` (or expand README) walking clone -> build -> run
+      `nova-app` and see a window; README quickstart currently never reaches a
+      rendered frame
+- [ ] Ship 1-2 small sample assets (a cube `.glb`, a small `.splat`) so `ingest_demo`
+      and splat ingestion are runnable zero-config
+- [ ] Reframe `nova-sample-game` explicitly as a forkable project template
+      (doc/README note), not just a pipeline smoke test
+- [ ] Add `CONTRIBUTING.md` documenting the fmt/clippy/test gate already enforced in CI
+### Agent-loop / innovative differentiator
+- [ ] Close the agent-fix loop end-to-end: connect `nova-rag` (context) +
+      `nova-agent-api` (commands) + `nova-overlay` (highlight -> fix prompt) into one
+      flagship example/demo
+- [ ] Replace `nova-rag`'s `FeatureHashEmbedder` placeholder with a real local
+      embedding model
+### Bug-hunt / hardening
+- [ ] Run a dedicated code/security review pass over `nova-agent-api`,
+      `nova-scripting-embedded`, and `nova-export` (untrusted-input surfaces: control
+      files, scripts, `.novapack` archives) — the zero-TODO-marker sweep doesn't
+      substitute for an actual bug audit
+- [ ] Promote the `cargo-tarpaulin` CI coverage job from informational
+      (`continue-on-error: true`) to a soft gate now that coverage work is complete
+
 ## Open Decisions
 - [x] Editor framework: **RESOLVED — egui/eframe (Rust-native immediate-mode)** over
       Tauri/ImGui. Rationale: pure-Rust, integrates directly with the existing

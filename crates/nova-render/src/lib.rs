@@ -9,16 +9,19 @@ use std::sync::Arc;
 use nova_ecs::transform::{Camera, GlobalTransform, Mesh, MeshKind};
 use nova_ecs::world::World;
 use nova_ecs::Mat4;
+use nova_ui::DrawList;
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 
 pub mod pbr;
 pub mod sprite;
+pub mod ui;
 pub use pbr::PbrRenderer;
 pub use sprite::{
     batch_sprites, collect_world_sprites, AtlasRegion, Sprite, SpriteRenderer, SpriteVertex,
     TextureAtlas,
 };
+pub use ui::{build_ui_vertices, UiOverlay};
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -71,6 +74,7 @@ pub struct Renderer {
     uniform_buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
     depth_view: wgpu::TextureView,
+    ui: UiOverlay,
 }
 
 impl Renderer {
@@ -208,6 +212,8 @@ impl Renderer {
 
         let depth_view = create_depth_view(&device, &config);
 
+        let ui = UiOverlay::new(device.clone(), queue.clone(), config.format);
+
         Ok(Renderer {
             window,
             surface,
@@ -221,6 +227,7 @@ impl Renderer {
             uniform_buffer,
             bind_group,
             depth_view,
+            ui,
         })
     }
 
@@ -241,6 +248,13 @@ impl Renderer {
 
     /// Render one frame from ECS state.
     pub fn render(&mut self, world: &World) -> anyhow::Result<()> {
+        self.render_with_ui(world, &DrawList::new())
+    }
+
+    /// Render the 3D scene, then composite the given UI draw list on top as a 2D
+    /// overlay (editor panels, gizmo handles, the highlight marquee). When the
+    /// list is empty nothing extra is drawn.
+    pub fn render_with_ui(&mut self, world: &World, ui_draw: &DrawList) -> anyhow::Result<()> {
         // Find the first camera.
         let mut camera_view_proj = None;
         if let Some((_, cam, gt)) = world
@@ -319,6 +333,16 @@ impl Renderer {
                     .write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
                 pass.draw_indexed(0..self.index_count, 0, 0..1);
             }
+        }
+
+        // 2D UI overlay on top of the 3D scene.
+        if !ui_draw.is_empty() {
+            self.ui.draw(
+                &mut encoder,
+                &view,
+                ui_draw,
+                (self.config.width, self.config.height),
+            );
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
