@@ -18,6 +18,7 @@ nova-telemetry = { path = "../nova-telemetry" }
 nova-ui = { path = "../nova-ui" }
 nova-editor = { path = "../nova-editor" }
 nova-overlay = { path = "../nova-overlay" }
+nova-neural-materials = { path = "../nova-neural-materials" }
 
 winit = "0.30"
 glam = "0.29"

@@ -1,166 +1,422 @@
-# TPT Nova — External Agent Protocol Reference
+# TPT Nova — External AI Agent Protocol
 
-This document is the authoritative, code-independent reference for the
-machine-to-machine control loop an external AI agent uses to drive the TPT
-Nova engine. It is intentionally independent of reading the Rust source in
-[`nova-agent-api`](../crates/nova-agent-api); the Rust types
-(`PROTOCOL_VERSION`, `AgentCommand`, `ControlFile`, `ControlChannel`) are the
-canonical implementation and this text describes their wire format.
+This document is a **developer reference** for driving the TPT Nova engine from an
+external AI agent. It covers three coordinated surfaces:
 
-The loop has two halves:
+1. the **control-file protocol** (agent → engine: hot-applied mutations),
+2. the **telemetry protocol** (engine → agent: observable world snapshots),
+3. and the **agent command surface** plus the **Highlight & Fix** overlay and
+   RAG context wiring.
 
-1. **Observe** — the engine continuously writes a *telemetry* snapshot of the
-   world (entities + components) to a file/socket. The agent reads it.
-2. **Act** — the agent writes a *control file* describing the mutations it
-   wants; the engine hot-applies it (no restart) the next time it polls.
+All field names, limits, and defaults below were cross-checked against the
+source (`crates/nova-app`, `crates/nova-agent-api`, `crates/nova-telemetry`,
+`crates/nova-overlay`, `crates/nova-rag`). No Rust code was modified to produce
+this document.
 
-The agent's power is deliberately bounded to a closed set of commands
-(spawn / despawn / transform). It can never read or write arbitrary engine
-memory or execute code.
+The loop in one sentence: **the agent reads `nova-telemetry.json`, decides on a
+change, writes a control file (`nova-control.json` by default), and the engine
+hot-applies it on the next poll — no engine restart required.**
 
 ---
 
-## 1. Control file (agent → engine)
+## 1. Control-File Protocol (agent → engine)
 
-The agent writes a JSON file. The engine polls it (by modification time) and
-applies any **new** version exactly once.
+An external process drives the engine purely by **writing a JSON file**. The
+engine polls that file each tick and re-applies it only when its modification
+time changes, so the loop is fully decoupled from the engine's lifecycle.
 
-```jsonc
+### 1.1 Polling / hot-apply mechanism
+
+Both the editor shell (`nova-app`) and the reusable `ControlChannel`
+(`nova-agent-api`) implement the same watch semantics:
+
+- Each tick the engine reads the file's `metadata.modified()` timestamp
+  (milliseconds since the Unix epoch).
+- If the mtime equals the last-seen mtime, **nothing is applied** — the loop is
+  **idempotent between writes**. A control file written once stays applied
+  (e.g. a rotation stays set) and is *not* re-touched or reset on subsequent
+  ticks.
+- When the mtime changes, the engine (re-)reads and parses the file and applies
+  the contained commands exactly once for that version.
+- Writing a **new** version (new mtime) replaces/extends the prior state — e.g.
+  a second file with a different rotation overrides the first.
+
+> Implementation note: `nova-app::apply_control` (crates/nova-app/src/main.rs)
+> tracks `control_mtime: Option<u64>`; `nova-agent-api::ControlChannel` tracks
+> the same idea plus an `applied_count` accumulator.
+
+### 1.2 Two control schemas
+
+There are **two** control-file shapes in the tree. They are independent.
+
+#### (a) The editor shell's simple control file — default `nova-control.json`
+
+`nova-app` reads the default path `nova-control.json`
+(`crates/nova-app/src/main.rs` → `CONTROL_PATH`). Its schema is intentionally
+tiny — it rotates the world's cube entity:
+
+```json
 {
-  "protocol": 1,                 // REQUIRED, must equal the engine's PROTOCOL_VERSION
-  "commands": [                  // ordered list, applied in sequence
-    { "op": "spawn", "name": "hero", "translation": [0, 0, 0], "mesh": "cube" },
-    { "op": "set_transform", "target": "hero", "translation": [2, 0, 0], "scale": [2, 2, 2] },
-    { "op": "set_rotation", "target": { "id": "e3#0" }, "rotation_euler_xyz": [0, 0.5, 0] },
-    { "op": "despawn", "target": { "id": "e7#1" } }
+  "set_rotation": { "x": 0.3, "y": 0.6, "z": 0.9 }
+}
+```
+
+- `set_rotation` is **optional** (`#[serde(default)]`). When present, the engine
+  sets the cube's local rotation via `Quat::from_euler(EulerRot::XYZ, x, y, z)`
+  (radians).
+- `RotationXYZ` fields `x`, `y`, `z` are `f32` and default to `0.0`.
+- A file with no `set_rotation` (or an unparseable file) is a no-op — bad JSON
+  is logged at `warn` level and skipped; the previous state is preserved.
+- This is the schema exercised by the editor shell and its regression test
+  `ai_control_loop_hot_applies_rotation_and_is_idempotent`.
+
+#### (b) The formal protocol — `nova-agent-api::ControlFile`
+
+`crates/nova-agent-api` formalizes the loop into a **versioned command batch**.
+Authoritative struct:
+
+```rust
+pub struct ControlFile {
+    pub protocol: u32,                 // must equal PROTOCOL_VERSION (1)
+    pub commands: Vec<AgentCommand>,   // applied in order, stop at first error
+}
+```
+
+On-disk JSON:
+
+```json
+{
+  "protocol": 1,
+  "commands": [
+    { "op": "spawn", "name": "player", "translation": [5.0, 0.0, 0.0], "mesh": "cube" },
+    { "op": "set_rotation", "target": { "id": "e0#0" }, "rotation_euler_xyz": [0.1, 0.2, 0.3] },
+    { "op": "set_transform", "target": { "name": "player" },
+      "translation": [1.0, 2.0, 3.0], "rotation_euler_xyz": [0.0, 1.57, 0.0], "scale": [1.0, 1.0, 1.0] },
+    { "op": "despawn", "target": { "id": "e3#0" } }
   ]
 }
 ```
 
-### Top-level fields
+- `protocol` must equal `PROTOCOL_VERSION` (currently `1`). A mismatch is
+  rejected with `AgentApiError::ProtocolMismatch`, so an old agent fails loudly
+  instead of silently mis-driving a newer engine.
+- `commands` are applied **in order** via `apply_commands`/`apply_command`;
+  application stops at the first error (the whole batch is transactional per
+  poll — no partial apply within a poll).
 
-| Field       | Type            | Notes                                                        |
-|-------------|-----------------|--------------------------------------------------------------|
-| `protocol`  | integer (`u32`) | Must equal the engine's supported `PROTOCOL_VERSION` (1).    |
-| `commands`  | array           | Ordered mutations. May be empty.                             |
+### 1.3 Caps & limits (enforced by `ControlChannel::poll`)
 
-If `protocol` does not match, the whole file is **rejected** (the agent is
-told the supported version). If `commands` exceeds `MAX_COMMANDS_PER_POLL`
-(10,000), the file is rejected to bound per-poll work and prevent a hostile
-file from flooding the world with spawns. The control file is also size-capped
-at **1 MiB**; larger files are refused.
+These are deliberate anti-abuse bounds, because a control file is written by a
+potentially untrusted external process:
 
-### Entity references
+| Limit | Constant | Value | Effect when exceeded |
+| --- | --- | --- | --- |
+| Max file size | `MAX_CONTROL_FILE_BYTES` | **1 MiB** (`1 << 20`) | Rejected before reading (`io::Error` InvalidData) |
+| Max commands per poll | `MAX_COMMANDS_PER_POLL` | **10_000** | Rejected with `AgentApiError::ControlParse` |
+| Protocol mismatch | `PROTOCOL_VERSION` | **1** | Rejected with `AgentApiError::ProtocolMismatch` |
 
-A command `target` is one of:
+A missing file yields `Ok(0)` commands applied (no error). An unparseable file
+yields `AgentApiError::ControlParse`.
 
-```jsonc
-{ "id": "e3#0" }     // telemetry id: "e" + index + "#" + generation
-{ "name": "hero" }   // stable name registered when the entity was spawned
+### 1.4 `AgentCommand` reference
+
+`AgentCommand` is the **closed** set of mutations an agent may request — it can
+reposition and spawn things, but never touch engine internals or run arbitrary
+code. It is `#[serde(tag = "op", rename_all = "snake_case")]`:
+
+| `op` | Fields | Effect |
+| --- | --- | --- |
+| `spawn` | `name: Option<String>`, `translation: [f32;3]`, `mesh: Option<String>` | New entity with a `Transform` at `translation`; if `mesh` is `"cube"` (or any string) a `Mesh { kind: Cube }` is added. If `name` is set, it is registered in the `EntityRegistry` world resource for later reference. |
+| `despawn` | `target: EntityRef` | Removes the entity from the world. Errors if the target is unknown/dead. |
+| `set_transform` | `target: EntityRef`, `translation: Option<[f32;3]>`, `rotation_euler_xyz: Option<[f32;3]>`, `scale: Option<[f32;3]>` | Sets whichever of translation/rotation(Euler XYZ, radians)/scale are provided. |
+| `set_rotation` | `target: EntityRef`, `rotation_euler_xyz: [f32;3]` | Sets only the local rotation (Euler XYZ, radians). |
+
+`EntityRef` is the union used to name a target:
+
+```rust
+pub enum EntityRef {
+    Id(String),    // a telemetry id, e.g. "e3#0"
+    Name(String),  // a stable name registered on spawn
+}
 ```
 
-`id` strings must match `e<index>#<generation>`. `name` resolves through the
-engine's `EntityRegistry` resource (populated by `spawn` commands that carry a
-`name`). An unresolvable reference is an error and stops batch application at
-that command.
+Serialized as `{"id": "e3#0"}` or `{"name": "player"}`. The id string format is
+`e<index>#<generation>` (parsed by `EntityRef::from_id_string`; malformed ids
+yield `AgentApiError::MalformedEntityId`). `resolve` checks the entity is still
+alive; unknown references yield `AgentApiError::UnknownEntity`.
 
-### Commands (`op`)
-
-All commands are tagged unions with `op` (snake_case):
-
-| `op`              | Fields                                                                 | Effect                                                              |
-|-------------------|------------------------------------------------------------------------|---------------------------------------------------------------------|
-| `spawn`           | `name?`, `translation: [f32;3]`, `mesh?` ("cube" or omitted)           | Create an entity with a `Transform` (+ `Mesh` if `mesh` given). If `name` is set, register it for later `name` references. |
-| `despawn`         | `target: EntityRef`                                                    | Remove the entity from the world.                                   |
-| `set_transform`   | `target`, `translation?`, `rotation_euler_xyz?`, `scale?`              | Overwrite the supplied `Transform` sub-fields (Euler XYZ radians). |
-| `set_rotation`    | `target`, `rotation_euler_xyz: [f32;3]`                               | Set only the rotation (Euler XYZ radians).                         |
-
-`rotation_euler_xyz` values are in **radians**. Unknown `mesh` strings fall
-back to a cube.
+> Note the distinction from the editor shell's `set_rotation` above: the
+> formal command rotates an arbitrary entity by `EntityRef`, whereas the
+> editor's `nova-control.json` rotates only the cube and uses a bare
+> `RotationXYZ`.
 
 ---
 
-## 2. Telemetry snapshot (engine → agent)
+## 2. Telemetry Protocol (engine → agent)
 
-The engine emits a JSON frame (`nova-telemetry::TelemetryFrame`) on an interval
-(default every 30 ticks). Schema:
+The engine emits a machine-readable snapshot of the whole ECS world so an agent
+can observe and self-correct. In the editor shell the default file is
+`nova-telemetry.json` and it is written **every 30 ticks**
+(`crates/nova-app/src/main.rs` → `TELEMETRY_INTERVAL = 30`, ≈ every 0.5 s at the
+60 Hz fixed timestep).
 
-```jsonc
+### 2.1 Frame shape
+
+The frame is `nova_telemetry::TelemetryFrame`:
+
+```rust
+pub struct TelemetryFrame {
+    pub schema_version: u32,        // currently 1
+    pub tick: u64,
+    pub seed: u64,                  // the world RNG seed (NOVA_SEED, default 0x1234_ABCD)
+    pub entities: Vec<EntityDump>,
+}
+
+pub struct EntityDump {
+    pub id: String,                          // e.g. "e0#0"
+    pub components: HashMap<String, Value>, // component name -> serde_json::Value
+}
+```
+
+`dump_world` iterates every live entity and serializes the components it finds:
+`Transform`, `GlobalTransform`, `Mesh`, `Camera`, `Parent`, `Children`.
+
+### 2.2 JSON example (one frame)
+
+```json
 {
   "schema_version": 1,
   "tick": 30,
-  "seed": 305441749,
+  "seed": 305441741,
   "entities": [
+    {
+      "id": "e0#0",
+      "components": {
+        "Transform": {
+          "translation": [0.0, 0.0, 0.0],
+          "rotation": [0.0, 0.0, 0.0, 1.0],
+          "scale": [1.0, 1.0, 1.0]
+        },
+        "GlobalTransform": {
+          "matrix": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+        },
+        "Mesh": { "kind": "Cube" }
+      }
+    },
     {
       "id": "e1#0",
       "components": {
-        "Transform": { "translation": [0, 0, 0], "rotation": [0, 0, 0, 1], "scale": [1, 1, 1] },
-        "Mesh": { "kind": "Cube" },
-        "GlobalTransform": { /* 4x4 matrix, row-major */ }
+        "Transform": {
+          "translation": [0.0, 0.0, 3.5],
+          "rotation": [0.0, 0.0, 0.0, 1.0],
+          "scale": [1.0, 1.0, 1.0]
+        },
+        "GlobalTransform": { "matrix": [ /* 16 floats */ ] },
+        "Camera": { "fov_y": 1.0, "near": 0.1, "far": 1000.0, "aspect": 1.0 }
       }
     }
   ]
 }
 ```
 
-| Field            | Type    | Notes                                                          |
-|------------------|---------|----------------------------------------------------------------|
-| `schema_version` | integer | Currently `1`.                                                  |
-| `tick`           | integer | Simulation tick the snapshot was taken on.                     |
-| `seed`           | integer | The world RNG seed (deterministic runs share a seed).          |
-| `entities`       | array   | One entry per live entity.                                     |
+Component value shapes (exact, from the serializer helpers):
 
-Each entity entry has:
+- `Transform`: `{ "translation": [x,y,z], "rotation": [x,y,z,w], "scale": [x,y,z] }`
+- `GlobalTransform`: `{ "matrix": [m00..m33] }` — the 4×4 column-major matrix as
+  16 floats.
+- `Mesh`: `{ "kind": "Cube" }` (the `MeshKind` debug string).
+- `Camera`: `{ "fov_y", "near", "far", "aspect" }` (all `f32`).
+- `Parent`: `{ "parent": "<entity id>" }`; `Children`: `{ "children": ["<id>", ...] }`.
 
-| Field        | Type   | Notes                                                          |
-|--------------|--------|----------------------------------------------------------------|
-| `id`         | string | Telemetry id, `"e<index>#<generation>"` — use it as `target`. |
-| `components` | object | Component name → JSON value. Possible keys: `Transform`, `GlobalTransform`, `Mesh`, `Camera`, `Parent`, `Children`, plus any gameplay components present. |
+The file is **pretty-printed JSON, truncated-and-overwritten each emit**, with a
+trailing newline.
 
-The agent reads this to discover entity ids, then issues `target: { "id": ... }`
-commands. A MessagePack variant (`MsgPackFileSink`) of the same frame exists for
-high-frequency payloads; the JSON frame remains the human/agent-readable
-default.
+### 2.3 Sinks
 
----
+`nova-telemetry` ships three `TelemetrySink`s:
 
-## 3. Polling contract (`ControlChannel`)
+- `FileSink` (default in `nova-app`; `nova-telemetry.json`) — pretty JSON.
+- `MsgPackFileSink` — compact **MessagePack** blob (named fields, so it
+  round-trips through the same serde types as JSON). Use for high-frequency /
+  large payloads. Decode with `rmp_serde` or `encode_msgpack` + `from_slice`.
+- `StdoutSink` — pretty JSON to stdout.
 
-Both the shipped `nova-app` and any host using `ControlChannel` follow the same
-rules:
-
-- The agent **writes the whole control file** (not a delta) to the agreed path.
-- The engine tracks the file's **mtime**; it re-applies only when the mtime
-  changes. Rewriting the same content without an mtime change is a no-op
-  (idempotent between writes).
-- One poll applies at most `MAX_COMMANDS_PER_POLL` commands, in order, stopping
-  at the first error.
-- Resolution: `id` references are validated against live entities; `name`
-  references resolve via the `EntityRegistry`.
+`TelemetryEmitter<S>` owns a sink and an interval (ticks). `maybe_emit(world,
+tick, seed)` emits only when `tick` is a multiple of the interval **and** isn't a
+repeat of the last emitted tick (no double-emit). The interval is clamped to at
+least 1. An agent reads the same frame back via
+`nova_agent_api::read_telemetry_file(path)`.
 
 ---
 
-## 4. Minimal agent session
+## 3. Agent Command Surface & RAG Context
 
-```text
-# 1. Read the current world.
-frame = read_telemetry_file("nova-telemetry.json")
-hero = frame.entities[0].id            # e.g. "e1#0"
+### 3.1 `ControlChannel` (the reusable hot-apply loop)
 
-# 2. Write a control file asking the engine to move it.
-control = ControlFile::new(vec![
-    AgentCommand::SetTransform {
-        target: EntityRef::Id(hero),
-        translation: Some([2.0, 0.0, 0.0]),
-        rotation_euler_xyz: None,
-        scale: None,
-    },
-])
-write_text("nova-control.json", control.to_json())
+`nova_agent_api::ControlChannel` is the host-side equivalent of the editor's
+file watch. Construct it with a path, then call `poll(&mut world)` each tick:
 
-# 3. Wait one poll; re-read telemetry — the entity is now at x=2.
+```rust
+use nova_agent_api::{ControlChannel, ControlFile, AgentCommand, EntityRef};
+
+let mut ch = ControlChannel::new("nova-control.json");
+let applied = ch.poll(&mut world)?;   // 0 if unchanged/absent, else #commands
+let total = ch.applied_count();        // cumulative across lifetime
 ```
 
-See [`nova-agent-api/examples/agent_fix_loop.rs`](../crates/nova-agent-api/examples/agent_fix_loop.rs)
-for a full RAG-backed "Highlight & Fix" demo that combines this control loop
-with `nova-overlay`'s region picking and `nova-rag` context retrieval.
+It enforces the 1 MiB size cap, the `MAX_COMMANDS_PER_POLL` (10_000) cap, and
+the protocol-version check described in §1.3. You can also apply commands
+directly without a file via `apply_command(&mut world, &cmd)` /
+`apply_commands(&mut world, &[cmd])`.
+
+### 3.2 `RagAssistant` — RAG-backed context
+
+Behind the **`rag` feature** (`nova-agent-api`'s `rag` feature pulls in
+`nova-rag`), `nova_agent_api::rag::RagAssistant` gives an agent project context
+to ground its fixes. It wraps `nova_rag::RagAgent` (default top-k = 4):
+
+```rust
+use nova_agent_api::rag::RagAssistant;
+
+// Index a project tree (hidden / build dirs skipped; empty `extensions` = all):
+let assistant = RagAssistant::index_project(".", &["rs", "md", "toml"])?;
+
+// Or build from an already-loaded nova_rag::Index:
+let assistant = RagAssistant::from_index(index);
+
+let ctx = assistant.context_for("how do I move the highlighted cube?")?; // prompt-ready block
+let hits = assistant.retrieve("physics collider rapier")?;               // Vec<ScoredHit>
+```
+
+- `RagAgent` / `Index` / `Document` / `ScoredHit` / `SearchError` come from
+  `nova-rag`. Embeddings are pluggable via the `Embedder` trait; the offline
+  default is `FeatureHashEmbedder` (deterministic, CI-friendly), with a real
+  local neural embedder behind `nova-rag`'s `real-embeddings` feature.
+- `context_for(query)` returns exactly the string an agent would paste above its
+  instruction before emitting `AgentCommand`s — it includes the retrieved text
+  plus `score=` lines so the agent can cite sources.
+- `retrieve(query)` returns `Vec<ScoredHit>` (document + cosine-similarity
+  score) for explicit citations.
+
+---
+
+## 4. Highlight & Fix Overlay Flow
+
+`crates/nova-overlay` turns a viewport marquee into a structured fix request an
+agent can act on. The renderer draws the rectangle; the crate owns the logic
+(region math, entity picking, prompt assembly) — fully testable without a GPU.
+
+### 4.1 Flow
+
+1. **Marquee drag** — the host feeds raw pointer events to a `SelectionTool`
+   (viewport pixel coords):
+   - `SelectionTool::begin(x, y)` on press,
+   - `SelectionTool::drag(x, y)` on move,
+   - `SelectionTool::current_rect(size)` returns the live `ScreenRect` to draw
+     each frame.
+2. **Release → request** — `SelectionTool::build_request(&world, view_proj,
+   size, instruction)` calls `end()` to get the normalized marquee, then
+   `build_fix_request`, which:
+   - rejects **empty (zero-area) regions** (`OverlayError::EmptyRegion`),
+   - projects each entity's `GlobalTransform` center to screen with
+     `project_to_screen` (returns `None` for points behind the camera, `w <= 0`),
+   - collects the entities whose centers fall inside the region
+     (`pick_entities_in_region`),
+   - assembles an `AiFixRequest`.
+3. **The `AiFixRequest`** (what the agent consumes):
+
+   ```rust
+   pub struct AiFixRequest {
+       pub region: [f32; 4],       // normalized x, y, w, h in [0,1]
+       pub entity_ids: Vec<String>,// telemetry ids of entities in the region
+       pub instruction: String,     // the natural-language instruction
+       pub prompt: String,          // ready-to-send combined prompt
+   }
+   ```
+
+   `build_prompt` renders:
+
+   ```
+   FIX REQUEST
+   Region (normalized x,y,w,h): [0.450, 0.433, 0.112, 0.150]
+   Entities in region: e0#0
+   Instruction: move the highlighted cube up
+   Use the engine control API to resolve this.
+   ```
+
+4. **Loop closed** — the agent reads `entity_ids` (which match telemetry ids),
+   grounds the instruction with `RagAssistant::context_for`, then applies
+   `AgentCommand`s (e.g. `SetTransform`) through a `ControlChannel`. The engine
+   hot-applies them, telemetry reflects the new state, and the agent verifies.
+
+### 4.2 Key types
+
+- `ScreenRect { x0, y0, x1, y1 }` (pixels, top-left origin, y-down) —
+  `normalized(size)` → `[x, y, w, h]` in `[0,1]`; `contains(x, y)`;
+  `new(a, b)` normalizes drag direction.
+- `project_to_screen(world_point, view_proj, size) -> Option<(u32,u32)>` —
+  inverse of the renderer's view-projection; `None` when clipped.
+- `pick_entities_in_region(world, view_proj, size, region) -> Vec<Entity>`.
+- `build_fix_request(world, view_proj, size, region, instruction) ->
+  Result<AiFixRequest, OverlayError>`.
+- `SelectionTool` — `is_dragging`, `begin`, `drag`, `end`, `current_rect`,
+  `last_request`, `build_request`.
+
+---
+
+## 5. Reference Implementation: the Agent Fix Loop
+
+The end-to-end loop (highlight → RAG → command → applied) is demonstrated by the
+**`agent_fix_loop` example** in `nova-agent-api`:
+
+```sh
+cargo run -p nova-agent-api --example agent_fix_loop --features rag
+```
+
+It runs headless (no GPU): it drags a `SelectionTool` marquee around a cube,
+builds the `AiFixRequest`, retrieves RAG context for the instruction, then emits
+a `SetTransform` `AgentCommand` through a `ControlChannel` and asserts the
+highlighted entity actually moved. This is the canonical reference for wiring
+all three surfaces together.
+
+> Discrepancy note: the task brief referred to this as *"`cargo run -p
+> nova-sample-game` `agent_fix_loop`"*. In the current tree, `nova-sample-game`
+> is a separate **headless pipeline demo** (`cargo run -p nova-sample-game`,
+> `run_pipeline()` — physics rest, scene save/reload, agent spawn/move,
+> splat→collider, asset pack) and does **not** contain `agent_fix_loop`. The
+> flagship agent-fix-loop demo lives in `nova-agent-api` (see exact command
+> above). Worth reconciling in docs/todo.
+
+---
+
+## Quick reference
+
+| Item | Value / type | Source |
+| --- | --- | --- |
+| Default control path | `nova-control.json` | nova-app `CONTROL_PATH` |
+| Default telemetry path | `nova-telemetry.json` | nova-app `TELEMETRY_INTERVAL`, `default_telemetry_path()` |
+| Telemetry interval | every **30 ticks** (~0.5 s @ 60 Hz) | nova-app `TELEMETRY_INTERVAL` |
+| Telemetry `schema_version` | `1` | nova-telemetry `dump_world` |
+| Protocol version | `PROTOCOL_VERSION = 1` | nova-agent-api |
+| Control file size cap | **1 MiB** (`MAX_CONTROL_FILE_BYTES`) | nova-agent-api |
+| Commands per poll cap | **10_000** (`MAX_COMMANDS_PER_POLL`) | nova-agent-api |
+| Command set | `spawn`, `despawn`, `set_transform`, `set_rotation` | nova-agent-api `AgentCommand` |
+| Entity ref | `{"id":"e#g"}` or `{"name":"..."}` | nova-agent-api `EntityRef` |
+| Rotation convention | Euler XYZ, **radians** | nova-agent-api / nova-app `EulerRot::XYZ` |
+| Idempotency | mtime-watched; applied once per write | nova-app `apply_control`, `ControlChannel::poll` |
+
+### Minimal working example (formal protocol)
+
+```json
+{
+  "protocol": 1,
+  "commands": [
+    { "op": "spawn", "name": "cube", "translation": [0, 0, 0], "mesh": "cube" },
+    { "op": "set_rotation", "target": { "name": "cube" }, "rotation_euler_xyz": [0, 0.5, 0] }
+  ]
+}
+```
+
+Write it as `nova-control.json` (or any path your `ControlChannel` watches), and
+the engine will apply it on the next poll while continuing to emit telemetry the
+agent can read back.

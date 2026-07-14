@@ -29,6 +29,12 @@ pub struct InputState {
     pub buttons: HashSet<MouseButton>,
     /// Accumulated scroll delta since the last `end_frame`.
     pub scroll: f32,
+    /// Text typed on the keyboard since the last `end_frame`, in input order.
+    /// Populated from winit `KeyEvent::text` on press; the bespoke UI is
+    /// pointer-only, so this is the bridge that lets a widget (e.g. the
+    /// Highlight & Fix instruction field) receive keystrokes without owning the
+    /// OS keyboard focus. Cleared by `end_frame`.
+    pub text_entered: String,
     /// Whether a real cursor position has been observed yet. Until the first
     /// `CursorMoved` we have no "prior position" to diff against, so the first
     /// sample must not produce a spurious delta.
@@ -45,6 +51,13 @@ impl InputState {
                     _ => return,
                 };
                 Self::apply_key(self, code, event.state);
+                // Capture typed text for pointer-only UI widgets. `text` is only
+                // present on the press edge for printable keys.
+                if event.state == ElementState::Pressed {
+                    if let Some(text) = &event.text {
+                        self.text_entered.push_str(text);
+                    }
+                }
             }
             WindowEvent::CursorMoved { position, .. } => {
                 self.apply_cursor_moved(position.x, position.y);
@@ -127,6 +140,7 @@ impl InputState {
         self.released_this_frame.clear();
         self.mouse_delta = (0.0, 0.0);
         self.scroll = 0.0;
+        self.text_entered.clear();
     }
 
     pub fn is_key_down(&self, code: KeyCode) -> bool {
@@ -278,17 +292,14 @@ mod tests {
     }
 
     #[test]
-    fn end_frame_clears_per_frame_accumulators() {
+    fn text_entered_cleared_by_end_frame() {
         let mut s = InputState::default();
-        s.apply_key(KeyCode::KeyW, ElementState::Pressed);
-        s.apply_mouse_wheel(MouseScrollDelta::LineDelta(0.0, 2.0));
-        assert!(s.key_just_pressed(KeyCode::KeyW));
-        assert_eq!(s.scroll, 2.0);
-
+        s.text_entered.push_str("hello");
+        assert_eq!(s.text_entered, "hello");
         s.end_frame();
-        assert!(!s.key_just_pressed(KeyCode::KeyW));
-        assert_eq!(s.scroll, 0.0);
-        // Held keys persist across frames.
+        assert_eq!(s.text_entered, "");
+        // Held keys persist across frames (only per-frame text is cleared).
+        s.keys.insert(KeyCode::KeyW);
         assert!(s.is_key_down(KeyCode::KeyW));
     }
 

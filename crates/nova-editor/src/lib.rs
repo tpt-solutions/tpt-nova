@@ -24,7 +24,7 @@ pub mod vibe;
 use nova_ecs::transform::Transform;
 use nova_ecs::{Entity, World};
 use nova_ui::{DragState, Rect, Ui, UiInput};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 pub use gizmo::{apply_gizmo, GizmoMode, GizmoSnap};
 pub use gizmo3d::{apply_gizmo_3d, drag_plane_point, ray_plane, GizmoMode3D, Ray};
@@ -34,7 +34,66 @@ pub use vibe::{normalized_to_screen, BezierCurve, CurveEditor, GravityCurveBindi
 
 use std::collections::HashSet;
 
-/// One entry in the asset browser (a registered, loadable asset).
+/// A recorded AI/external action for the editor's explainability panel.
+///
+/// `nova-agent-api` (or the in-editor "Highlight & Fix" flow) can attach an
+/// optional `rationale` describing *why* a batch of [`nova_agent_api::AgentCommand`]s
+/// was applied; the panel shows the last N actions so a human can audit what the
+/// agent did and when.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AgentAction {
+    /// A short human-readable summary (e.g. "move e0#1 +1.0 on x").
+    pub summary: String,
+    /// Optional free-text rationale supplied by the agent.
+    pub rationale: Option<String>,
+    /// The world tick at which the action was applied.
+    pub tick: u64,
+}
+
+/// A bounded ring buffer of recent telemetry snapshots (stored as JSON strings),
+/// enabling a mini "time-travel" debugger in the editor: scrub backward through
+/// the last N world states without re-running the simulation.
+#[derive(Debug, Clone, Default)]
+pub struct TelemetryRing {
+    cap: usize,
+    frames: VecDeque<String>,
+}
+
+impl TelemetryRing {
+    pub fn new(cap: usize) -> Self {
+        TelemetryRing {
+            cap: cap.max(1),
+            frames: VecDeque::new(),
+        }
+    }
+
+    /// Store the newest frame, dropping the oldest when over capacity.
+    pub fn push(&mut self, frame_json: String) {
+        self.frames.push_back(frame_json);
+        while self.frames.len() > self.cap {
+            self.frames.pop_front();
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.frames.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.frames.is_empty()
+    }
+
+    /// The frame at `idx` where `0` is the oldest retained snapshot and
+    /// `len() - 1` is the most recent.
+    pub fn get(&self, idx: usize) -> Option<&String> {
+        self.frames.get(idx)
+    }
+
+    /// The most recently stored frame, if any.
+    pub fn latest(&self) -> Option<&String> {
+        self.frames.back()
+    }
+}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AssetEntry {
     pub name: String,
@@ -215,6 +274,14 @@ pub struct EditorState {
     pub vibe: CurveEditor,
     /// Binding mapping the curve to a world gravity magnitude.
     pub vibe_binding: GravityCurveBinding,
+    /// Which text field currently holds keyboard focus (pointer-only UI), if any.
+    /// The focused field id (e.g. "fix_instruction") receives typed keystrokes
+    /// via [`UiInput::text_entered`]; clicking a field toggles its focus.
+    pub text_focus: Option<String>,
+    /// Log of recent AI/external actions for the explainability panel.
+    pub action_log: Vec<AgentAction>,
+    /// Ring buffer of recent telemetry snapshots for the time-travel scrubber.
+    pub telemetry_ring: TelemetryRing,
 }
 
 impl Default for EditorState {
@@ -231,6 +298,9 @@ impl Default for EditorState {
             field_drag: HashMap::new(),
             vibe: CurveEditor::default(),
             vibe_binding: GravityCurveBinding::default(),
+            text_focus: None,
+            action_log: Vec::new(),
+            telemetry_ring: TelemetryRing::new(300),
         }
     }
 }
@@ -301,6 +371,19 @@ impl EditorState {
         let before = self.assets.len();
         self.assets.retain(|a| a.name != name);
         self.assets.len() != before
+    }
+
+    /// Record an AI/external action for the explainability panel. Keeps only the
+    /// most recent 200 actions.
+    pub fn record_action(&mut self, summary: impl Into<String>, rationale: Option<String>, tick: u64) {
+        self.action_log.push(AgentAction {
+            summary: summary.into(),
+            rationale,
+            tick,
+        });
+        if self.action_log.len() > 200 {
+            self.action_log.remove(0);
+        }
     }
 }
 
@@ -404,7 +487,35 @@ pub fn inspector_panel(
     ui.finish()
 }
 
-/// Build the asset browser panel: a list of registered [`AssetEntry`]s plus a
+/// Build a prompt-ready text block describing `entity` for an AI agent (or a
+/// human clipboard), packaging its component state plus optional nearby context
+/// (e.g. RAG-retrieved docs). Dependency-free: it reads component fields via the
+/// [`inspect_entity`] registry so it stays correct as new components are added.
+///
+/// The result is plain text meant to be pasted into a chat or written to a file
+/// by the host (the bespoke UI has no clipboard access of its own).
+pub fn explain_entity(world: &World, entity: Entity, context: Option<&str>) -> String {
+    let mut out = format!("Explain entity {entity}\n");
+    out.push_str("Components:\n");
+    let inspections = inspect_entity(world, entity);
+    if inspections.is_empty() {
+        out.push_str("  (none)\n");
+    }
+    for comp in &inspections {
+        out.push_str(&format!("  {}:\n", comp.component));
+        for f in &comp.fields {
+            out.push_str(&format!("    {} = {:.4}\n", f.path, f.value));
+        }
+    }
+    if let Some(ctx) = context {
+        if !ctx.trim().is_empty() {
+            out.push_str("\nRelevant context:\n");
+            out.push_str(ctx);
+            out.push('\n');
+        }
+    }
+    out
+}
 /// "Play" toggle button at the top that reflects `state.playing`. Clicking an
 /// asset row selects it (recorded in `state.selected_asset`); this is the
 /// hook the editor uses to spawn/drag an asset into the viewport.
@@ -470,6 +581,7 @@ mod tests {
             pointer: Vec2::new(30.0, 45.0),
             pointer_down: true,
             pointer_pressed: true,
+            ..Default::default()
         };
         let _ = hierarchy_panel(&world, &mut state, click, area, false);
         assert_eq!(state.selected, Some(e));
@@ -490,6 +602,7 @@ mod tests {
             pointer: Vec2::new(30.0, 45.0),
             pointer_down: true,
             pointer_pressed: true,
+            ..Default::default()
         };
         let _ = hierarchy_panel(&world, &mut state, click_a, area, false);
         assert_eq!(state.selected, Some(a));
@@ -499,6 +612,7 @@ mod tests {
             pointer: Vec2::new(30.0, 71.0),
             pointer_down: true,
             pointer_pressed: true,
+            ..Default::default()
         };
         let _ = hierarchy_panel(&world, &mut state, click_b, area, true);
         assert_eq!(state.selection_size(), 2);
@@ -537,12 +651,14 @@ mod tests {
             pointer: Vec2::new(60.0, 134.0),
             pointer_down: true,
             pointer_pressed: true,
+            ..Default::default()
         };
         let _ = inspector_panel(&mut world, &mut state, press, area);
         let drag = UiInput {
             pointer: Vec2::new(210.0, 134.0),
             pointer_down: true,
             pointer_pressed: false,
+            ..Default::default()
         };
         let _ = inspector_panel(&mut world, &mut state, drag, area);
         let t = world.get_component::<Transform>(e).unwrap();
@@ -646,5 +762,46 @@ mod tests {
             before,
         );
         assert!(!state.history.can_undo());
+    }
+
+    #[test]
+    fn telemetry_ring_keeps_most_recent_within_cap() {
+        let mut ring = TelemetryRing::new(3);
+        assert!(ring.is_empty());
+        ring.push("a".to_string());
+        ring.push("b".to_string());
+        ring.push("c".to_string());
+        ring.push("d".to_string());
+        assert_eq!(ring.len(), 3);
+        // Oldest ("a") evicted; newest is "d".
+        assert_eq!(ring.get(0), Some(&"b".to_string()));
+        assert_eq!(ring.latest(), Some(&"d".to_string()));
+    }
+
+    #[test]
+    fn record_action_appends_and_caps_log() {
+        let mut s = EditorState::new();
+        assert!(s.action_log.is_empty());
+        s.record_action("move x", Some("user dragged".into()), 10);
+        assert_eq!(s.action_log.len(), 1);
+        assert_eq!(s.action_log[0].summary, "move x");
+        assert_eq!(s.action_log[0].tick, 10);
+        assert_eq!(s.action_log[0].rationale.as_deref(), Some("user dragged"));
+
+        for i in 0..250 {
+            s.record_action(format!("act{i}"), None, i as u64);
+        }
+        assert_eq!(s.action_log.len(), 200, "log capped at 200");
+    }
+
+    #[test]
+    fn explain_entity_packages_components_and_context() {
+        let mut world = World::new();
+        let e = world.spawn();
+        world.add_component(e, Transform::from_translation(Vec3::new(1.0, 2.0, 3.0)));
+        let text = explain_entity(&world, e, Some("see docs/foo.md"));
+        assert!(text.contains(&format!("Explain entity {e}")));
+        assert!(text.contains("Transform.translation.x = 1.0000"));
+        assert!(text.contains("see docs/foo.md"));
     }
 }

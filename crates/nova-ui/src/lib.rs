@@ -84,7 +84,7 @@ impl Rect {
 }
 
 /// Pointer/keyboard state for one UI frame.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct UiInput {
     /// Pointer position in screen pixels.
     pub pointer: Vec2,
@@ -92,6 +92,10 @@ pub struct UiInput {
     pub pointer_down: bool,
     /// Pointer button went down this frame (a click edge).
     pub pointer_pressed: bool,
+    /// Whether a keyboard shift modifier is held (for multi-select, etc.).
+    pub shift_held: bool,
+    /// Text typed since the last frame (pointer-only UI bridge for keystrokes).
+    pub text_entered: String,
 }
 
 /// A drawing primitive produced by the UI.
@@ -571,6 +575,7 @@ mod tests {
             pointer: center,
             pointer_down: true,
             pointer_pressed: true,
+            ..Default::default()
         };
         let mut ui = Ui::new(input);
         ui.begin_panel(panel_rect(), Some("Menu"));
@@ -586,6 +591,7 @@ mod tests {
             pointer: Vec2::new(5.0, 5.0),
             pointer_down: true,
             pointer_pressed: true,
+            ..Default::default()
         };
         let mut ui = Ui::new(input);
         ui.begin_panel(panel_rect(), None);
@@ -657,6 +663,7 @@ mod tests {
             pointer: Vec2::new(60.0, 60.0),
             pointer_down: true,
             pointer_pressed: true,
+            ..Default::default()
         };
         let mut ui = Ui::new(input);
         ui.begin_panel(panel_rect(), None);
@@ -670,6 +677,7 @@ mod tests {
             pointer: Vec2::new(60.0, 60.0),
             pointer_down: true,
             pointer_pressed: true,
+            ..Default::default()
         };
         let mut ui2 = Ui::new(input2);
         ui2.begin_panel(panel_rect(), None);
@@ -686,6 +694,7 @@ mod tests {
             pointer: Vec2::new(60.0, 60.0),
             pointer_down: true,
             pointer_pressed: true,
+            ..Default::default()
         };
         let mut drag = DragState::new();
         let mut v = 1.0f32;
@@ -700,6 +709,7 @@ mod tests {
             pointer: Vec2::new(90.0, 60.0),
             pointer_down: true,
             pointer_pressed: false,
+            ..Default::default()
         };
         let mut ui2 = Ui::new(move_in);
         ui2.begin_panel(panel_rect(), None);
@@ -716,6 +726,7 @@ mod tests {
             pointer: Vec2::new(90.0, 60.0),
             pointer_down: false,
             pointer_pressed: false,
+            ..Default::default()
         };
         let mut ui3 = Ui::new(release);
         ui3.begin_panel(panel_rect(), None);
@@ -731,6 +742,7 @@ mod tests {
             pointer: Vec2::new(140.0, 56.0),
             pointer_down: true,
             pointer_pressed: true,
+            ..Default::default()
         };
         let mut ui = Ui::new(input);
         ui.begin_panel(panel_rect(), None);
@@ -749,6 +761,7 @@ mod tests {
             pointer: Vec2::new(60.0, 56.0),
             pointer_down: true,
             pointer_pressed: true,
+            ..Default::default()
         };
         let mut ui = Ui::new(input);
         ui.begin_panel(panel_rect(), None);

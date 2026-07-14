@@ -24,6 +24,7 @@ members = [
     "crates/nova-overlay",
     "crates/nova-videocap",
     "crates/nova-sample-game",
+    "crates/xtask",
 ]
 
 [workspace.package]

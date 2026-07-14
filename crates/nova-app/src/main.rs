@@ -25,8 +25,11 @@ use nova_editor::{
     asset_browser_panel, hierarchy_panel, inspector_panel, normalized_to_screen, EditorState,
 };
 use nova_input::{default_action_map, ActionMap, InputState};
+use nova_neural_materials::prompt::{FeedSource, MaterialPrompt};
+use nova_neural_materials::{MaterialBindings, NeuralMaterialRegistry};
 use nova_overlay::{project_to_screen, SelectionTool};
 use nova_render::Renderer;
+use nova_scene;
 use nova_telemetry::{FileSink, TelemetryEmitter};
 use nova_ui::{Color, DrawCommand, DrawList, Rect, Ui, UiInput};
 use serde::Deserialize;
@@ -38,6 +41,7 @@ use winit::window::{Window, WindowAttributes};
 
 const FIXED_DT: f32 = 1.0 / 60.0;
 const TELEMETRY_INTERVAL: u64 = 30; // emit every 30 ticks (~0.5s)
+const AUTOSAVE_INTERVAL: u64 = 300; // autosave every 300 ticks (~5s)
 const CONTROL_PATH: &str = "nova-control.json";
 
 /// Which pointer tool is active in the 3D viewport.
@@ -83,8 +87,12 @@ pub(crate) fn editor_layout(size: (u32, u32)) -> EditorLayout {
         // The "Highlight & Fix" instruction field, shown across the top-center
         // while the Highlight tool is active.
         instruction: Rect::from_min_size(Vec2::new(280.0, 34.0), Vec2::new(center_w, 26.0)),
-        // The "Vibe GUI" Bézier curve editor, along the bottom-center strip.
-        vibe: Rect::from_min_size(Vec2::new(280.0, h - 142.0), Vec2::new(center_w, 96.0)),
+        // The "Vibe GUI" Bézier curve editor, along the bottom-center strip
+        // (above the agent/telemetry panel).
+        vibe: Rect::from_min_size(Vec2::new(280.0, h - 270.0), Vec2::new(center_w, 100.0)),
+        // Agent explainability log + telemetry time-travel scrubber, along the
+        // bottom-center strip beside the asset browser.
+        agent_panel: Rect::from_min_size(Vec2::new(280.0, h - 150.0), Vec2::new(center_w, 140.0)),
         // The interactive 3D region: the full window minus the side/bottom panels
         // and the vibe strip at the bottom.
         viewport: Rect::from_min_size(
@@ -102,6 +110,7 @@ pub(crate) struct EditorLayout {
     assets: Rect,
     instruction: Rect,
     vibe: Rect,
+    agent_panel: Rect,
     viewport: Rect,
 }
 
@@ -118,6 +127,7 @@ impl EditorLayout {
             || self.assets.contains(p)
             || self.instruction.contains(p)
             || self.vibe.contains(p)
+            || self.agent_panel.contains(p)
     }
 }
 
@@ -166,8 +176,23 @@ struct App {
     /// (replaces the previously-hardcoded literal). Edited via the in-viewport
     /// text field; fed to the fix request on release.
     fix_instruction: String,
-    /// Whether the fix-instruction text field currently has keyboard focus.
-    fix_text_focused: bool,
+    /// "Propose" mode: when on, a built Highlight & Fix request is shown as a
+    /// translucent ghost preview with Accept/Reject instead of being applied
+    /// immediately. Lets a human vet an agent action before it mutates the world.
+    propose_mode: bool,
+    /// A fix request awaiting Accept/Reject while `propose_mode` is active.
+    pending_fix: Option<nova_overlay::AiFixRequest>,
+    /// The neural-material registry (live video-LLM feeds) and its ECS bindings.
+    /// Demonstrates the PBR binding contract: a material id is bound to the cube
+    /// entity so each frame's latest decoded frame can drive its surface.
+    neural: NeuralMaterialRegistry,
+    bindings: MaterialBindings,
+    /// Optional autosave path (enabled via the `NOVA_AUTOSAVE` env var). When set,
+    /// the world is periodically serialized with `nova-scene` and, if
+    /// `NOVA_RESTORE` is also set, reloaded on the next launch.
+    autosave_path: Option<PathBuf>,
+    /// Selected index into `editor.telemetry_ring` for the time-travel scrubber.
+    scrub_index: Option<usize>,
 }
 
 impl App {
@@ -212,7 +237,25 @@ impl App {
         editor.add_asset("cube.glb", "mesh");
         editor.add_asset("park.splat", "splat");
 
-        App {
+        // PBR neural-material binding demo: register a "video" feed (MockProvider
+        // by default, swap for a real Video LLM via `NeuralMaterialRegistry::
+        // set_provider`) and bind it to the cube so its latest decoded frame can
+        // drive the cube's surface each tick. The actual GPU texture upload/bind
+        // lives in `nova-neural-materials` (`NeuralTexture` + `MaterialBinding`);
+        // here we resolve the bound frame every tick to prove the link is live.
+        let mut neural = NeuralMaterialRegistry::default();
+        let _ = neural.register(
+            MaterialPrompt::new("video", "ambient billboard", FeedSource::CaptureDevice(0))
+                .with_resolution(8, 8),
+        );
+        let mut bindings = MaterialBindings::new();
+        bindings.bind("video", cube);
+
+        let autosave_path = std::env::var("NOVA_AUTOSAVE")
+            .ok()
+            .map(PathBuf::from);
+
+        let mut app = App {
             window: None,
             renderer: None,
             world,
@@ -242,8 +285,65 @@ impl App {
             last_fix: None,
             camera_distance: 3.5,
             fix_instruction: String::from("fix selection"),
-            fix_text_focused: false,
+            propose_mode: false,
+            pending_fix: None,
+            neural,
+            bindings,
+            autosave_path,
+            scrub_index: None,
+        };
+        if std::env::var("NOVA_RESTORE").is_ok() {
+            app.restore_session();
         }
+        app
+    }
+
+    /// Reload the most recently autosaved world (opt-in via the `NOVA_RESTORE`
+    /// env var) in place, re-binding the cube/camera and rebuilding the
+    /// scheduler. No-op (with a warning) if no autosave exists or it is missing
+    /// the cube/camera entities. Tests never enable `NOVA_RESTORE`, so the
+    /// hermetic seeded world is preserved.
+    fn restore_session(&mut self) {
+        let Some(path) = self.autosave_path.clone() else {
+            return;
+        };
+        if !path.exists() {
+            return;
+        }
+        let Ok(world) = nova_scene::load_from_file(&path) else {
+            log::warn!("session restore failed to load {}", path.display());
+            return;
+        };
+        let seed = self
+            .world
+            .resource::<nova_ecs::rng::RngResource>()
+            .map(|r| r.seed)
+            .unwrap_or(0);
+        let mut world = world;
+        world.add_resource(InputState::default());
+        world.add_resource(default_action_map());
+        world.add_resource(nova_ecs::rng::RngResource::new(seed));
+        world.add_resource(TickResource { tick: 0 });
+
+        let cube = world.query_1::<Mesh>().into_iter().next().map(|(e, _)| e);
+        let camera = world.query_1::<Camera>().into_iter().next().map(|(e, _)| e);
+        let (cube, camera) = match (cube, camera) {
+            (Some(c), Some(cam)) => (c, cam),
+            _ => {
+                log::warn!("autosave missing cube/camera; ignoring restore");
+                return;
+            }
+        };
+        let mut scheduler = Scheduler::new();
+        scheduler.add_system(move |w: &mut World| movement_system(w, cube));
+        scheduler
+            .add_system(move |w: &mut World| nova_ecs::scene_graph::propagate_transforms(w));
+
+        self.world = world;
+        self.scheduler = scheduler;
+        self.cube = cube;
+        self.camera = camera;
+        log::info!("restored session from {}", path.display());
     }
 
     fn new(seed: u64) -> Self {
@@ -305,7 +405,7 @@ impl App {
 
         self.scheduler.run(&mut self.world);
 
-        self.emit_and_tick();
+        self.pump_neural_and_emit();
     }
 
     /// A "paused" simulation step for play-in-editor: still hot-applies external
@@ -319,10 +419,17 @@ impl App {
             &self.control_path,
         );
         nova_ecs::scene_graph::propagate_transforms(&mut self.world);
-        self.emit_and_tick();
+        self.pump_neural_and_emit();
     }
 
-    fn emit_and_tick(&mut self) {
+    /// Advance the neural-material feeds and emit telemetry (also capturing the
+    /// emitted frame into the editor's time-travel ring buffer).
+    fn pump_neural_and_emit(&mut self) {
+        // Poll the live video-LLM feeds so the bound material's latest frame
+        // stays current; a renderer would upload this onto the cube's PBR
+        // material via `MaterialBinding::latest_frame` + `NeuralTexture`.
+        self.neural.update();
+
         let tick = {
             let t = self.world.resource_mut::<TickResource>().unwrap();
             t.tick += 1;
@@ -334,7 +441,23 @@ impl App {
             .map(|r| r.seed)
             .unwrap_or(0);
 
-        let _ = self.emitter.maybe_emit(&self.world, tick, seed);
+        // Capture every emitted frame into the ring buffer for the scrubber.
+        if self.emitter.maybe_emit(&self.world, tick, seed).unwrap_or(false) {
+            if let Ok(json) = serde_json::to_string(
+                &nova_telemetry::dump_world(&self.world, tick, seed),
+            ) {
+                self.editor.telemetry_ring.push(json);
+            }
+        }
+
+        // Periodic autosave (opt-in via NOVA_AUTOSAVE env) of the in-memory world.
+        if let Some(path) = &self.autosave_path {
+            if tick % AUTOSAVE_INTERVAL == 0 {
+                if let Err(e) = nova_scene::save_to_file(&self.world, path) {
+                    log::warn!("autosave failed: {e}");
+                }
+            }
+        }
     }
 
     fn render_frame(&mut self) {
@@ -419,28 +542,43 @@ impl App {
             pointer: self.pointer,
             pointer_down: self.pointer_down,
             pointer_pressed: self.pointer_pressed,
+            shift_held: self.modifiers.shift_key(),
+            text_entered: self
+                .world
+                .resource::<InputState>()
+                .map(|i| i.text_entered.clone())
+                .unwrap_or_default(),
         };
+
+        // Feed typed keystrokes into the focused text field (pointer-only UI
+        // bridge). The Highlight & Fix instruction field is the focus target.
+        if self.editor.text_focus.as_deref() == Some("fix_instruction") {
+            self.fix_instruction.push_str(&input.text_entered);
+        }
 
         let mut draw: DrawList = Vec::new();
 
         // ---- Toolbar (interactive) ---------------------------------------
-        draw.extend(self.build_toolbar(layout.toolbar, input));
+        draw.extend(self.build_toolbar(layout.toolbar, input.clone()));
 
         // ---- Hierarchy / inspector / asset panels (self-handling) ---------
         draw.extend(hierarchy_panel(
             &self.world,
             &mut self.editor,
-            input,
+            input.clone(),
             layout.hierarchy,
             self.modifiers.shift_key(),
         ));
         draw.extend(inspector_panel(
             &mut self.world,
             &mut self.editor,
-            input,
+            input.clone(),
             layout.inspector,
         ));
-        draw.extend(asset_browser_panel(&mut self.editor, input, layout.assets));
+        draw.extend(asset_browser_panel(&mut self.editor, input.clone(), layout.assets));
+
+        // ---- Agent explainability log + telemetry scrubber ---------------
+        draw.extend(self.draw_agent_panel(layout.agent_panel, input.clone()));
 
         // ---- Vibe GUI (Bézier curve editor) ------------------------------
         // Drive interaction each frame (immediate mode), then render the curve.
