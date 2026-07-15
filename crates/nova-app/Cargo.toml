@@ -13,12 +13,13 @@ path = "src/main.rs"
 [dependencies]
 nova-ecs = { workspace = true }
 nova-input = { path = "../nova-input" }
-nova-render = { path = "../nova-render" }
+nova-render = { path = "../nova-render", features = ["neural"] }
 nova-telemetry = { path = "../nova-telemetry" }
 nova-ui = { path = "../nova-ui" }
 nova-editor = { path = "../nova-editor" }
 nova-overlay = { path = "../nova-overlay" }
 nova-neural-materials = { path = "../nova-neural-materials" }
+nova-scene = { path = "../nova-scene" }
 
 winit = "0.30"
 glam = "0.29"

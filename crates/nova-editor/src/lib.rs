@@ -375,7 +375,12 @@ impl EditorState {
 
     /// Record an AI/external action for the explainability panel. Keeps only the
     /// most recent 200 actions.
-    pub fn record_action(&mut self, summary: impl Into<String>, rationale: Option<String>, tick: u64) {
+    pub fn record_action(
+        &mut self,
+        summary: impl Into<String>,
+        rationale: Option<String>,
+        tick: u64,
+    ) {
         self.action_log.push(AgentAction {
             summary: summary.into(),
             rationale,

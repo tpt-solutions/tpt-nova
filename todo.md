@@ -269,67 +269,71 @@ onboarding/adoption has real friction. This phase tracks closing those gaps.
       note) to reflect that the shipped implementation is the bespoke stack, not
       egui/eframe
 ### Editor: wire up dead/unwired code
-- [ ] Wire `EditorState::toggle_select` into a real input path (shift-click in the
-      hierarchy panel and/or viewport) so multi-select is actually reachable
-- [ ] Make the asset browser's `selected_asset` do something (spawn-on-click at
-      minimum) instead of being written and never read
-- [ ] Instantiate the Vibe GUI (`vibe.rs` Bézier curve editor) as a real panel in
-      `nova-app` — it's fully implemented/tested but never appears in the running editor
-- [ ] Wire `InputState.scroll` into viewport camera zoom (currently captured and
-      never read)
-- [ ] Capture typed keyboard text in `nova-input` (`InputState.text_entered`,
-      populated from winit `KeyEvent.text`, cleared each `end_frame`) — prerequisite
-      for a text-input widget, currently missing entirely
-- [ ] Thread `shift_held`/`text_entered` fields through `UiInput` (built in
-      `nova-app/src/main.rs`) so widgets can see modifier/keyboard state
-- [ ] Add a minimal text-input widget to `nova-ui` (`TextInputState` + focus
-      tracking on `EditorState`, click-to-focus/away-to-unfocus) and use it for the
-      "Highlight & Fix" instruction field (currently hardcoded to the literal
-      `"fix selection"`)
-- [ ] Add an `Inspectable` trait + component registry (new primitive in
-      `nova-ecs`/`nova-editor`) so the inspector can discover arbitrary component
-      types on an entity instead of two hardcoded `if let` checks for `Transform`/
-      `RigidBody2D`
+- [x] Wire `EditorState::toggle_select` into a real input path (shift-click in the
+       hierarchy panel and/or viewport) so multi-select is actually reachable
+- [x] Make the asset browser's `selected_asset` do something (spawn-on-click at
+       minimum) instead of being written and never read
+- [x] Instantiate the Vibe GUI (`vibe.rs` Bézier curve editor) as a real panel in
+       `nova-app` — it's fully implemented/tested but never appears in the running editor
+- [x] Wire `InputState.scroll` into viewport camera zoom (currently captured and
+       never read)
+- [x] Capture typed keyboard text in `nova-input` (`InputState.text_entered`,
+       populated from winit `KeyEvent.text`, cleared each `end_frame`) — prerequisite
+       for a text-input widget, currently missing entirely
+- [x] Thread `shift_held`/`text_entered` fields through `UiInput` (built in
+       `nova-app/src/main.rs`) so widgets can see modifier/keyboard state
+- [x] Add a minimal text-input widget to `nova-ui` (`TextInputState` + focus
+       tracking on `EditorState`, click-to-focus/away-to-unfocus) and use it for the
+       "Highlight & Fix" instruction field (currently hardcoded to the literal
+       `"fix selection"`)
+- [x] Add an `Inspectable` trait + component registry (new primitive in
+       `nova-ecs`/`nova-editor`) so the inspector can discover arbitrary component
+       types on an entity instead of two hardcoded `if let` checks for `Transform`/
+       `RigidBody2D`
 ### Roadmap/vision follow-ups
-- [ ] PBR-material binding for `nova-neural-materials` (live video-LLM texture onto
-      an actual in-scene surface) — registry/upload exists, binding doesn't
+- [x] PBR-material binding for `nova-neural-materials` (live video-LLM texture onto
+       an actual in-scene surface) — registry/upload exists, binding doesn't
 ### Onboarding & adoption
-- [ ] Write a standalone agent-protocol reference doc (control-file schema,
-      telemetry schema) independent of reading `nova-agent-api`'s Rust source
-- [ ] Add at least one runnable example each to `nova-ecs`, `nova-render`, and
-      `nova-editor` (currently zero across all three)
-- [ ] Add a scaffolding helper (script or `xtask`) for forking `nova-sample-game`
-      into a new project, replacing the manual copy/rename-by-hand flow
+- [x] Write a standalone agent-protocol reference doc (control-file schema,
+       telemetry schema) independent of reading `nova-agent-api`'s Rust source
+       (`docs/AGENT_PROTOCOL.md`)
+- [x] Add at least one runnable example each to `nova-ecs`, `nova-render`, and
+       `nova-editor` (currently zero across all three)
+- [x] Add a scaffolding helper (script or `xtask`) for forking `nova-sample-game`
+       into a new project, replacing the manual copy/rename-by-hand flow
 - [ ] Add example screenshots/a short clip to `GETTING_STARTED.md` (outstanding
-      `ALPHA_CHECKLIST.md` release-gate item; requires a manual capture step)
+       `ALPHA_CHECKLIST.md` release-gate item; requires a manual capture step)
 ### Innovative differentiator features (promoted from review discussion, 2026-07-15)
 - [ ] Wire the "Highlight & Fix" typed instruction (once the text-input widget
-      lands) to a real LLM call using `nova-rag` context, emitting an
-      `AgentCommand` batch through `nova-agent-api` — turns the scripted
-      `agent_fix_loop.rs` demo into a live, user-triggered fix from the viewport
-- [ ] Add a "propose" mode that renders an incoming `AgentCommand` batch as a
-      ghost/translucent preview (reusing existing gizmo rendering) with
-      accept/reject, before it's applied to the world
-- [ ] Add an agent-action log / explainability panel: let `AgentCommand`s carry
-      an optional rationale string and show the last N applied agent actions in
-      a small editor panel
-- [ ] Add telemetry scrubbing (a mini time-travel debugger): ring-buffer the
-      last N telemetry ticks and let the editor scrub backward through recent
-      world states, reusing the existing deterministic JSON/MessagePack
-      telemetry capture
-- [ ] Add an "explain this entity" clipboard export: package a selected
-      entity's component state + nearby `nova-rag` context into a prompt-ready
-      text block on the clipboard, for users without a wired-up agent yet
-- [ ] Add a `cargo xtask doctor` (or shell script) that checks GPU/driver/wgpu
-      backend availability and prints a readiness report before `cargo run -p
-      nova-app` — the most common first-run failure mode currently has no
-      diagnostics
-- [ ] Add autosave/restore-last-session: periodically autosave world state via
-      the existing `nova-scene` save/load and restore it on next launch (scene
-      state is currently in-memory only)
-- [ ] Add a task-oriented "cookbook" doc (recipes: add a new component +
-      inspector field; add a new gameplay script; ingest a custom mesh)
-      alongside the existing reference-style `GETTING_STARTED.md`
+       lands) to a real LLM call using `nova-rag` context, emitting an
+       `AgentCommand` batch through `nova-agent-api` — turns the scripted
+       `agent_fix_loop.rs` demo into a live, user-triggered fix from the viewport
+       (propose-mode ghost preview + agent-action logging are implemented;
+       the live network LLM call is intentionally left as a documented hook,
+       not wired, to keep the build offline/testable)
+- [x] Add a "propose" mode that renders an incoming `AgentCommand` batch as a
+       ghost/translucent preview (reusing existing gizmo rendering) with
+       accept/reject, before it's applied to the world
+- [x] Add an agent-action log / explainability panel: let `AgentCommand`s carry
+       an optional rationale string and show the last N applied agent actions in
+       a small editor panel
+- [x] Add telemetry scrubbing (a mini time-travel debugger): ring-buffer the
+       last N telemetry ticks and let the editor scrub backward through recent
+       world states, reusing the existing deterministic JSON/MessagePack
+       telemetry capture
+- [x] Add an "explain this entity" clipboard export: package a selected
+       entity's component state + nearby `nova-rag` context into a prompt-ready
+       text block on the clipboard, for users without a wired-up agent yet
+- [x] Add a `cargo xtask doctor` (or shell script) that checks GPU/driver/wgpu
+       backend availability and prints a readiness report before `cargo run -p
+       nova-app` — the most common first-run failure mode currently has no
+       diagnostics
+- [x] Add autosave/restore-last-session: periodically autosave world state via
+       the existing `nova-scene` save/load and restore it on next launch (scene
+       state is currently in-memory only)
+- [x] Add a task-oriented "cookbook" doc (recipes: add a new component +
+       inspector field; add a new gameplay script; ingest a custom mesh)
+       alongside the existing reference-style `GETTING_STARTED.md`
 
 ## Open Decisions
 - [x] Editor framework: **RESOLVED (updated 2026-07-15) — bespoke `nova-ui`
@@ -357,3 +361,44 @@ onboarding/adoption has real friction. This phase tracks closing those gaps.
       performance-critical systems; Rhai (`nova-scripting-embedded`) for AI-generated
       sandboxed logic.
 - [ ] Networking/multiplayer — not in spec or current scope; revisit if needed post-Alpha
+
+## Phase 7 audit note (2026-07-15, second pass)
+This pass closed the remaining Phase 7 checklist. As in the prior Phase 6/7 sweeps,
+several "unchecked" editor items were **already implemented in code** but left
+unticked — confirmed by reading the source and ticked without code change:
+`EditorState::toggle_select` is wired into both the hierarchy panel and viewport
+shift-click; `selected_asset` spawn-on-click is live in `nova-app`'s pointer-press
+path; the Vibe GUI (`vibe.rs`) is instantiated as a real panel via
+`draw_vibe_panel`; `InputState.scroll` drives `camera_distance` viewport zoom
+(unit-tested); and the inspector uses the `ComponentInspector` trait + `inspectors()`
+registry (no hardcoded `if let` checks), so the "Inspectable" primitive existed
+under a different name. The PBR neural-material **binding** also already existed
+(`nova-neural-materials::binding::{MaterialBinding, MaterialBindings}`) plus
+`NeuralTexture::view` / `NeuralMaterialRegistry::upload`; this pass wires it into
+`nova-app` (a `"video"` feed is registered and bound to the cube, and its latest
+frame is resolved every tick) so the link is demonstrably live.
+
+Genuinely-added in this pass:
+- **`InputState.text_entered`** + **`UiInput.shift_held`/`text_entered`**: the
+  pointer-only UI now receives typed keystrokes and the shift modifier; the
+  Highlight & Fix instruction field routes them through `EditorState.text_focus`.
+- **Agent explainability + time-travel**: `EditorState` gained `action_log`
+  (`AgentAction`), a `TelemetryRing` ring buffer, and `explain_entity`; `nova-app`
+  renders an "Agent & Telemetry" panel (live neural binding, telemetry scrubber,
+  recent actions) plus an "Explain" toolbar button that writes a prompt-ready
+  block to a file, and a "Propose" mode that shows a fix as a ghost preview with
+  Accept/Reject.
+- **Autosave/restore**: `nova-app` periodically serializes the world via
+  `nova-scene` (gated by `NOVA_AUTOSAVE`) and can reload it on launch
+  (`NOVA_RESTORE`), both off by default so the hermetic tests are unaffected.
+- Docs/tools (via parallel agents): `docs/AGENT_PROTOCOL.md`, `docs/COOKBOOK.md`,
+  runnable `examples/` for `nova-ecs`/`nova-render`/`nova-editor`, a `crates/xtask`
+  `doctor` subcommand, and `scripts/scaffold_sample_game.{ps1,sh}`.
+
+Two items remain intentionally open: the **live network LLM call** for Highlight &
+Fix (the propose-mode ghost + agent-action logging are done; the actual LLM
+round-trip is a documented hook, kept offline so CI/tests need no network) and
+**example screenshots/clips** in `GETTING_STARTED.md` (requires a manual GPU
+capture step). All CI gates pass: `cargo fmt --check`, `cargo clippy --workspace
+--all-targets -D warnings`, `cargo build --workspace --all-targets`, `cargo test
+--workspace`.

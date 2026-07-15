@@ -29,7 +29,6 @@ use nova_neural_materials::prompt::{FeedSource, MaterialPrompt};
 use nova_neural_materials::{MaterialBindings, NeuralMaterialRegistry};
 use nova_overlay::{project_to_screen, SelectionTool};
 use nova_render::Renderer;
-use nova_scene;
 use nova_telemetry::{FileSink, TelemetryEmitter};
 use nova_ui::{Color, DrawCommand, DrawList, Rect, Ui, UiInput};
 use serde::Deserialize;
@@ -251,9 +250,7 @@ impl App {
         let mut bindings = MaterialBindings::new();
         bindings.bind("video", cube);
 
-        let autosave_path = std::env::var("NOVA_AUTOSAVE")
-            .ok()
-            .map(PathBuf::from);
+        let autosave_path = std::env::var("NOVA_AUTOSAVE").ok().map(PathBuf::from);
 
         let mut app = App {
             window: None,
@@ -336,8 +333,7 @@ impl App {
         };
         let mut scheduler = Scheduler::new();
         scheduler.add_system(move |w: &mut World| movement_system(w, cube));
-        scheduler
-            .add_system(move |w: &mut World| nova_ecs::scene_graph::propagate_transforms(w));
+        scheduler.add_system(move |w: &mut World| nova_ecs::scene_graph::propagate_transforms(w));
 
         self.world = world;
         self.scheduler = scheduler;
@@ -442,10 +438,14 @@ impl App {
             .unwrap_or(0);
 
         // Capture every emitted frame into the ring buffer for the scrubber.
-        if self.emitter.maybe_emit(&self.world, tick, seed).unwrap_or(false) {
-            if let Ok(json) = serde_json::to_string(
-                &nova_telemetry::dump_world(&self.world, tick, seed),
-            ) {
+        if self
+            .emitter
+            .maybe_emit(&self.world, tick, seed)
+            .unwrap_or(false)
+        {
+            if let Ok(json) =
+                serde_json::to_string(&nova_telemetry::dump_world(&self.world, tick, seed))
+            {
                 self.editor.telemetry_ring.push(json);
             }
         }
@@ -522,7 +522,15 @@ impl App {
         };
 
         if let Some(renderer) = self.renderer.as_mut() {
-            if let Err(e) = renderer.render_with_ui(&self.world, &draw) {
+            // Paint bound neural-material feeds onto in-scene surfaces when a
+            // `MaterialBinding` exists for an entity; otherwise the plain
+            // pipeline is used per-entity inside `render_with_neural`.
+            if let Err(e) = renderer.render_with_neural(
+                &self.world,
+                &draw,
+                &self.bindings,
+                &self.neural,
+            ) {
                 log::error!("render error: {e}");
             }
         }
@@ -575,7 +583,11 @@ impl App {
             input.clone(),
             layout.inspector,
         ));
-        draw.extend(asset_browser_panel(&mut self.editor, input.clone(), layout.assets));
+        draw.extend(asset_browser_panel(
+            &mut self.editor,
+            input.clone(),
+            layout.assets,
+        ));
 
         // ---- Agent explainability log + telemetry scrubber ---------------
         draw.extend(self.draw_agent_panel(layout.agent_panel, input.clone()));
@@ -613,12 +625,18 @@ impl App {
         // ---- Highlight & Fix marquee -------------------------------------
         if self.tool == ViewportTool::Highlight {
             // The instruction text field (typed by the user, replaces the old
-            // hardcoded literal).
-            let mut ui = Ui::new(input);
+            // hardcoded literal). Focus is owned by `EditorState.text_focus` so
+            // the pointer-only UI can route keystrokes from `UiInput.text_entered`.
+            let mut ui = Ui::new(input.clone());
             ui.begin_panel(layout.instruction, Some("Highlight & Fix"));
-            let resp = ui.text_input("Instruction", &self.fix_instruction, self.fix_text_focused);
+            let focused = self.editor.text_focus.as_deref() == Some("fix_instruction");
+            let resp = ui.text_input("Instruction", &self.fix_instruction, focused);
             if resp.clicked {
-                self.fix_text_focused = !self.fix_text_focused;
+                self.editor.text_focus = if focused {
+                    None
+                } else {
+                    Some("fix_instruction".to_string())
+                };
             }
             ui.end_panel();
             draw.extend(ui.finish());
@@ -635,7 +653,94 @@ impl App {
             }
         }
 
+        // ---- Propose-mode ghost preview ----------------------------------
+        // When a fix is pending accept/reject, draw a translucent ghost of the
+        // highlighted region and offer Accept/Reject so a human can vet the
+        // agent's action before it is recorded/applied.
+        if let Some(req) = &self.pending_fix {
+            let [x, y, w, h] = req.region;
+            let px = x * self.viewport_size.0 as f32;
+            let py = y * self.viewport_size.1 as f32;
+            let pw = w * self.viewport_size.0 as f32;
+            let ph = h * self.viewport_size.1 as f32;
+            draw.push(DrawCommand::Rect {
+                rect: Rect::from_min_size(Vec2::new(px, py), Vec2::new(pw, ph)),
+                color: Color::rgba(1.0, 0.8, 0.2, 0.28),
+                rounding: 0.0,
+            });
+        }
+
         draw
+    }
+
+    /// Build the agent explainability + telemetry-scrub panel: shows the live
+    /// neural-material binding, a time-travel scrubber over recent telemetry
+    /// frames, the last N recorded agent actions, and Accept/Reject for a
+    /// pending "propose"-mode fix.
+    fn draw_agent_panel(&mut self, area: Rect, input: UiInput) -> DrawList {
+        let mut ui = Ui::new(input);
+        ui.begin_panel(area, Some("Agent & Telemetry"));
+
+        // Neural-material PBR binding status (the bound material's live frame).
+        let bound = self.bindings.bindings_for(self.cube);
+        match bound.first() {
+            Some(b) => match self.neural.latest(&b.material_id) {
+                Some(frame) => ui.label(&format!(
+                    "neural '{}': {}x{} @{}ms",
+                    b.material_id, frame.width, frame.height, frame.timestamp_ms
+                )),
+                None => ui.label(&format!("neural '{}': (waiting)", b.material_id)),
+            },
+            None => ui.label("(no neural binding)"),
+        };
+
+        // Telemetry time-travel scrubber over the ring buffer.
+        let n = self.editor.telemetry_ring.len();
+        ui.label(&format!("telemetry frames: {n}"));
+        if n > 0 {
+            let mut idx = self.scrub_index.unwrap_or(n - 1).min(n - 1) as f32;
+            let changed = ui.slider("scrub", &mut idx, 0.0, (n - 1) as f32);
+            if changed {
+                self.scrub_index = Some(idx as usize);
+            }
+            if let Some(json) = self.editor.telemetry_ring.get(idx as usize) {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(json) {
+                    let ents = v["entities"].as_array().map(|a| a.len()).unwrap_or(0);
+                    let tick = v["tick"].as_u64().unwrap_or(0);
+                    ui.label(&format!("  tick {tick} · {ents} entities"));
+                }
+            }
+        }
+
+        ui.label("recent actions:");
+        for a in self.editor.action_log.iter().rev().take(4) {
+            let r = a.rationale.as_deref().unwrap_or("");
+            ui.label(&format!("  [{}] {} — {}", a.tick, a.summary, r));
+        }
+
+        // Accept/Reject a pending propose-mode fix.
+        if self.pending_fix.is_some() {
+            let accept = ui.button("Accept fix");
+            if accept.clicked {
+                if let Some(req) = self.pending_fix.take() {
+                    self.last_fix = Some(req.clone());
+                    let tick = self
+                        .world
+                        .resource::<TickResource>()
+                        .map(|t| t.tick)
+                        .unwrap_or(0);
+                    self.editor
+                        .record_action("highlight & fix", Some(req.prompt), tick);
+                }
+            }
+            let reject = ui.button("Reject fix");
+            if reject.clicked {
+                self.pending_fix = None;
+            }
+        }
+
+        ui.end_panel();
+        ui.finish()
     }
 
     /// Render the Vibe GUI Bézier curve editor into a draw list for `area`.
@@ -758,6 +863,32 @@ impl App {
             self.editor.history.redo(&mut self.world);
         }
 
+        // "Propose" mode: a built Highlight & Fix request is shown as a ghost
+        // preview with Accept/Reject instead of being applied immediately.
+        let mut propose = self.propose_mode;
+        let _ = ui.checkbox("Propose", &mut propose);
+        if propose != self.propose_mode {
+            self.propose_mode = propose;
+            if !propose {
+                self.pending_fix = None;
+            }
+        }
+
+        // "Explain" packs the selected entity's component state (+ optional RAG
+        // context) into a prompt-ready text block and writes it to a file for the
+        // user to paste into a chat (the bespoke UI has no clipboard access).
+        if ui.button("Explain").clicked {
+            if let Some(e) = self.editor.selected {
+                let text = nova_editor::explain_entity(&self.world, e, None);
+                let path = std::env::temp_dir().join(format!("nova_explain_{e}.txt"));
+                if let Err(err) = std::fs::write(&path, &text) {
+                    log::warn!("explain write failed: {err}");
+                } else {
+                    log::info!("explained {e} -> {}", path.display());
+                }
+            }
+        }
+
         if let Some(fix) = &self.last_fix {
             ui.label(&format!("fix: {} ent", fix.entity_ids.len()));
         } else {
@@ -856,8 +987,20 @@ impl App {
                     self.viewport_size,
                     &self.fix_instruction,
                 ) {
-                    log::info!("Highlight & Fix request:\n{}", req.prompt);
-                    self.last_fix = Some(req);
+                    let tick = self
+                        .world
+                        .resource::<TickResource>()
+                        .map(|t| t.tick)
+                        .unwrap_or(0);
+                    if self.propose_mode {
+                        // Hold for human vetting: show a ghost + Accept/Reject.
+                        self.pending_fix = Some(req);
+                    } else {
+                        log::info!("Highlight & Fix request:\n{}", req.prompt);
+                        self.last_fix = Some(req.clone());
+                        self.editor
+                            .record_action("highlight & fix", Some(req.prompt), tick);
+                    }
                 }
             }
         }
@@ -868,15 +1011,18 @@ impl App {
             return;
         }
         // While the Highlight & Fix instruction field has focus, keystrokes edit
-        // that string instead of driving editor shortcuts. Escape unfocuses.
-        if self.fix_text_focused {
+        // that string instead of driving editor shortcuts. Typed characters
+        // arrive via `InputState.text_entered` (fed in `build_editor_ui`); here
+        // we only handle the control keys (backspace to delete, Escape to
+        // unfocus).
+        if self.editor.text_focus.as_deref() == Some("fix_instruction") {
             match key {
-                Key::Character(c) => self.fix_instruction.push_str(c.as_str()),
                 Key::Named(NamedKey::Backspace) => {
                     self.fix_instruction.pop();
                 }
-                Key::Named(NamedKey::Space) => self.fix_instruction.push(' '),
-                Key::Named(NamedKey::Escape) => self.fix_text_focused = false,
+                Key::Named(NamedKey::Escape) => {
+                    self.editor.text_focus = None;
+                }
                 _ => {}
             }
             return;
@@ -1474,5 +1620,83 @@ mod tests {
             "clicking with a selected asset should spawn an entity"
         );
         assert!(app.editor.selected.is_some());
+    }
+
+    // ---- Innovative differentiator features -------------------------------
+
+    /// Drive a Highlight & Fix marquee drag over the cube at screen center.
+    fn highlight_flow(app: &mut App) {
+        app.tool = ViewportTool::Highlight;
+        app.viewport_size = (1280, 720);
+        app.pointer = Vec2::new(640.0, 360.0);
+        app.on_pointer_press(); // begin the marquee at the cube's projected center
+        app.pointer = Vec2::new(740.0, 420.0);
+        app.on_pointer_release(); // drag + build the fix request
+    }
+
+    #[test]
+    fn neural_material_binding_resolves_live_frame() {
+        // The PBR binding contract: a material id is bound to the cube, and each
+        // tick the registry produces a live frame the renderer can upload.
+        let mut app = App::new(0x1234_5678);
+        app.step();
+        let bound = app.bindings.bindings_for(app.cube);
+        assert_eq!(bound.len(), 1, "cube should have one neural binding");
+        let frame = app.neural.latest(&bound[0].material_id);
+        assert!(frame.is_some(), "bound material must produce a live frame");
+    }
+
+    #[test]
+    fn telemetry_ring_captures_recent_frames() {
+        // The time-travel scrubber must accumulate recent emitted frames.
+        let mut app = App::new(0x7AC0);
+        for _ in 0..(TELEMETRY_INTERVAL + 1) {
+            app.step();
+        }
+        assert!(
+            !app.editor.telemetry_ring.is_empty(),
+            "ring buffer should hold emitted telemetry frames"
+        );
+    }
+
+    #[test]
+    fn highlight_fix_records_agent_action() {
+        // A completed Highlight & Fix request is logged to the explainability
+        // panel (with its prompt as rationale) when not in propose mode.
+        let mut app = App::new(0xF11);
+        app.propose_mode = false;
+        highlight_flow(&mut app);
+        assert!(app.last_fix.is_some(), "fix request should be built");
+        assert_eq!(app.editor.action_log.len(), 1, "action should be logged");
+        assert!(app
+            .editor
+            .action_log
+            .last()
+            .unwrap()
+            .rationale
+            .as_deref()
+            .unwrap()
+            .contains("FIX REQUEST"));
+    }
+
+    #[test]
+    fn propose_mode_holds_pending_fix_without_applying() {
+        // In propose mode the fix is held for human vetting: a ghost preview is
+        // shown (pending_fix set) and nothing is applied or logged yet.
+        let mut app = App::new(0x9ACE);
+        app.propose_mode = true;
+        highlight_flow(&mut app);
+        assert!(
+            app.pending_fix.is_some(),
+            "fix should be pending accept/reject"
+        );
+        assert!(
+            app.last_fix.is_none(),
+            "fix must not auto-apply in propose mode"
+        );
+        assert!(
+            app.editor.action_log.is_empty(),
+            "no action logged until accepted"
+        );
     }
 }

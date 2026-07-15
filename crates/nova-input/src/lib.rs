@@ -10,7 +10,7 @@ pub use winit::keyboard::{KeyCode, PhysicalKey};
 
 use std::collections::{HashMap, HashSet};
 
-use winit::event::WindowEvent;
+use winit::event::{ElementState, WindowEvent};
 
 /// Live and per-frame input state.
 #[derive(Debug, Default, Clone)]

@@ -20,6 +20,8 @@
 //! loop stays safe: an agent can reposition and spawn things, but cannot
 //! corrupt engine internals or execute arbitrary code.
 
+pub mod llm;
+
 use std::path::{Path, PathBuf};
 use std::time::{Duration, UNIX_EPOCH};
 

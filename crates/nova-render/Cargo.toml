@@ -16,3 +16,13 @@ bytemuck = "1"
 pollster = "0.3"
 anyhow = "1"
 log = "0.4"
+
+[features]
+default = []
+# Wires a live `nova-neural-materials` feed onto in-scene surfaces: entities with
+# a `MaterialBinding` get their latest decoded frame uploaded as an albedo texture.
+neural = ["nova-neural-materials"]
+
+[dependencies.nova-neural-materials]
+workspace = true
+optional = true

@@ -4,14 +4,22 @@
 //! pipeline. It reads entity transforms and camera state from the ECS each
 //! frame and draws them — the ECS stays free of all GPU types.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use nova_ecs::transform::{Camera, GlobalTransform, Mesh, MeshKind};
 use nova_ecs::world::World;
-use nova_ecs::Mat4;
+use nova_ecs::{Entity, Mat4};
 use nova_ui::DrawList;
 use wgpu::util::DeviceExt;
 use winit::window::Window;
+
+/// When the `neural` feature is on, `nova-render` can paint a live
+/// `nova-neural-materials` feed (a Video-LLM / webcam clip) onto an in-scene
+/// surface by uploading the bound feed's latest frame onto a GPU texture and
+/// sampling it as the entity's albedo.
+#[cfg(feature = "neural")]
+use nova_neural_materials::{MaterialBindings, NeuralMaterialRegistry, NeuralTexture};
 
 pub mod pbr;
 pub mod sprite;
@@ -28,6 +36,7 @@ pub use ui::{build_ui_vertices, UiOverlay};
 struct Vertex {
     position: [f32; 3],
     normal: [f32; 3],
+    uv: [f32; 2],
 }
 
 impl Vertex {
@@ -45,6 +54,11 @@ impl Vertex {
                     offset: 12,
                     shader_location: 1,
                     format: wgpu::VertexFormat::Float32x3,
+                },
+                wgpu::VertexAttribute {
+                    offset: 24,
+                    shader_location: 2,
+                    format: wgpu::VertexFormat::Float32x2,
                 },
             ],
         }
@@ -67,7 +81,22 @@ pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
-    pipeline: wgpu::RenderPipeline,
+    /// Pipeline for plain (non-neural) entities — flat Lambert-shaded cube.
+    base_pipeline: wgpu::RenderPipeline,
+    /// Pipeline for entities bound to a live neural material: samples the bound
+    /// feed's decoded frame as an albedo texture (only built with the `neural`
+    /// feature).
+    #[cfg(feature = "neural")]
+    neural_pipeline: wgpu::RenderPipeline,
+    /// Bind group layout for the neural albedo texture + sampler (group 1).
+    #[cfg(feature = "neural")]
+    neural_bgl: wgpu::BindGroupLayout,
+    /// Linear sampler used to sample every neural albedo texture.
+    #[cfg(feature = "neural")]
+    neural_sampler: wgpu::Sampler,
+    /// Per-entity GPU texture + bind group for currently-bound neural materials.
+    #[cfg(feature = "neural")]
+    neural_textures: HashMap<Entity, (NeuralTexture, wgpu::BindGroup)>,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     index_count: u32,
@@ -155,15 +184,15 @@ impl Renderer {
             }],
         });
 
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        let base_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("cube-pipeline-layout"),
             bind_group_layouts: &[Some(&bind_group_layout)],
             immediate_size: 0,
         });
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let base_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("cube-pipeline"),
-            layout: Some(&pipeline_layout),
+            layout: Some(&base_pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
                 entry_point: Some("vs_main"),
@@ -198,6 +227,85 @@ impl Renderer {
             cache: None,
         });
 
+        // The neural pipeline shares the same vertex/uniform inputs but also
+        // samples a per-entity albedo texture (group 1) so a live
+        // `nova-neural-materials` feed can be painted onto an in-scene surface.
+        #[cfg(feature = "neural")]
+        let (neural_bgl, neural_sampler, neural_pipeline) = {
+            let neural_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("neural-albedo-bgl"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            view_dimension: wgpu::TextureViewDimension::D2,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    },
+                ],
+            });
+            let neural_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("neural-albedo-sampler"),
+                address_mode_u: wgpu::AddressMode::ClampToEdge,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                ..Default::default()
+            });
+            let neural_pipeline_layout =
+                device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("neural-pipeline-layout"),
+                    bind_group_layouts: &[Some(&bind_group_layout), Some(&neural_bgl)],
+                    immediate_size: 0,
+                });
+            let neural_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("neural-pipeline"),
+                layout: Some(&neural_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[Some(Vertex::layout())],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_neural"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: config.format,
+                        blend: Some(wgpu::BlendState::REPLACE),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    cull_mode: Some(wgpu::Face::Back),
+                    front_face: wgpu::FrontFace::Ccw,
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(wgpu::CompareFunction::Less),
+                    stencil: wgpu::StencilState::default(),
+                    bias: wgpu::DepthBiasState::default(),
+                }),
+                multisample: wgpu::MultisampleState::default(),
+                multiview_mask: None,
+                cache: None,
+            });
+            (neural_bgl, neural_sampler, neural_pipeline)
+        };
+
         let (vertices, indices) = build_cube();
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("cube-vertices"),
@@ -220,7 +328,15 @@ impl Renderer {
             device,
             queue,
             config,
-            pipeline,
+            base_pipeline,
+            #[cfg(feature = "neural")]
+            neural_pipeline,
+            #[cfg(feature = "neural")]
+            neural_bgl,
+            #[cfg(feature = "neural")]
+            neural_sampler,
+            #[cfg(feature = "neural")]
+            neural_textures: HashMap::new(),
             vertex_buffer,
             index_buffer,
             index_count: indices.len() as u32,
@@ -316,7 +432,7 @@ impl Renderer {
                 multiview_mask: None,
             });
 
-            pass.set_pipeline(&self.pipeline);
+            pass.set_pipeline(&self.base_pipeline);
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
@@ -348,6 +464,163 @@ impl Renderer {
         self.queue.submit(std::iter::once(encoder.finish()));
         self.queue.present(texture);
         Ok(())
+    }
+
+    /// Render the 3D scene with live **neural-material** binding, then composite
+    /// the UI overlay on top.
+    ///
+    /// Entities that have a [`MaterialBindings`] entry pointing at a registered
+    /// `nova-neural-materials` feed are drawn with the `neural` pipeline, which
+    /// samples that feed's latest decoded frame as the entity's albedo. All other
+    /// entities fall back to the plain `base_pipeline`.
+    #[cfg(feature = "neural")]
+    pub fn render_with_neural(
+        &mut self,
+        world: &World,
+        ui_draw: &DrawList,
+        bindings: &MaterialBindings,
+        registry: &NeuralMaterialRegistry,
+    ) -> anyhow::Result<()> {
+        let mut camera_view_proj = None;
+        if let Some((_, cam, gt)) = world
+            .query_2::<Camera, GlobalTransform>()
+            .into_iter()
+            .next()
+        {
+            let aspect = self.config.width as f32 / self.config.height.max(1) as f32;
+            camera_view_proj = Some(compute_view_proj(cam, gt, aspect));
+        }
+        let view_proj = camera_view_proj.unwrap_or(Mat4::IDENTITY);
+
+        let frame = self.surface.get_current_texture();
+        let texture = match frame {
+            wgpu::CurrentSurfaceTexture::Success(t)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+            other => {
+                log::warn!("surface texture unavailable: {other:?}");
+                return Ok(());
+            }
+        };
+        let view = texture
+            .texture
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("render-encoder"),
+            });
+
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("render-pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: 0.05,
+                            g: 0.07,
+                            b: 0.1,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &self.depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                occlusion_query_set: None,
+                timestamp_writes: None,
+                multiview_mask: None,
+            });
+
+            pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+            pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+
+            for (e, mesh, gt) in world.query_2::<Mesh, GlobalTransform>() {
+                if mesh.kind != MeshKind::Cube {
+                    continue;
+                }
+                // Pick the neural pipeline (and upload the bound frame) when this
+                // entity is bound to a feed that has produced a frame.
+                let bound_frame = bindings
+                    .bindings_for(e)
+                    .into_iter()
+                    .find_map(|b| registry.latest(&b.material_id));
+                match bound_frame {
+                    Some(frame_data) => {
+                        // Lazily create the per-entity albedo texture, then fetch
+                        // it immutably (alongside the other immutable field borrows
+                        // below) so we can upload + bind it without a borrow clash.
+                        self.ensure_neural(e, frame_data.width, frame_data.height);
+                        let (tex, bg) = self.neural_textures.get(&e).unwrap();
+                        if let Err(err) = tex.upload(&self.queue, frame_data) {
+                            log::warn!("neural upload failed: {err}");
+                        }
+                        pass.set_pipeline(&self.neural_pipeline);
+                        pass.set_bind_group(0, &self.bind_group, &[]);
+                        pass.set_bind_group(1, bg, &[]);
+                    }
+                    None => {
+                        pass.set_pipeline(&self.base_pipeline);
+                        pass.set_bind_group(0, &self.bind_group, &[]);
+                    }
+                }
+                let uniforms = Uniforms {
+                    view_proj: view_proj.to_cols_array_2d(),
+                    model: gt.0.to_cols_array_2d(),
+                };
+                self.queue
+                    .write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+                pass.draw_indexed(0..self.index_count, 0, 0..1);
+            }
+        }
+
+        // 2D UI overlay on top of the 3D scene.
+        if !ui_draw.is_empty() {
+            self.ui.draw(
+                &mut encoder,
+                &view,
+                ui_draw,
+                (self.config.width, self.config.height),
+            );
+        }
+
+        self.queue.submit(std::iter::once(encoder.finish()));
+        self.queue.present(texture);
+        Ok(())
+    }
+
+    /// Lazily create the per-entity neural albedo texture + bind group for
+    /// `entity`, sized to the feed's frame resolution. Returns nothing so the
+    /// caller can re-borrow the fields immutably (texture, bind group, pipeline,
+    /// queue) without a conflicting mutable borrow.
+    #[cfg(feature = "neural")]
+    fn ensure_neural(&mut self, entity: Entity, width: u32, height: u32) {
+        if !self.neural_textures.contains_key(&entity) {
+            let tex = NeuralTexture::create(&self.device, width, height, &format!("neural-{entity}"));
+            let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("neural-albedo-bg"),
+                layout: &self.neural_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(tex.view()),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.neural_sampler),
+                    },
+                ],
+            });
+            self.neural_textures.insert(entity, (tex, bg));
+        }
     }
 
     /// The window's current inner size.
@@ -447,24 +720,17 @@ fn build_cube() -> (Vec<Vertex>, Vec<u16>) {
 
     let mut vertices = Vec::new();
     let mut indices: Vec<u16> = Vec::new();
+    // Per-face UVs (0,0) -> (1,1) so a neural albedo texture maps cleanly.
+    let uvs: [[f32; 2]; 4] = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
     for (a, b, c, d, n) in faces.iter() {
         let base = vertices.len() as u16;
-        vertices.push(Vertex {
-            position: *a,
-            normal: *n,
-        });
-        vertices.push(Vertex {
-            position: *b,
-            normal: *n,
-        });
-        vertices.push(Vertex {
-            position: *c,
-            normal: *n,
-        });
-        vertices.push(Vertex {
-            position: *d,
-            normal: *n,
-        });
+        for (p, uv) in [(*a, uvs[0]), (*b, uvs[1]), (*c, uvs[2]), (*d, uvs[3])] {
+            vertices.push(Vertex {
+                position: p,
+                normal: *n,
+                uv,
+            });
+        }
         indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
     (vertices, indices)
@@ -480,16 +746,19 @@ struct Uniforms {
 struct VsOut {
     @builtin(position) clip_pos: vec4<f32>,
     @location(0) normal: vec3<f32>,
+    @location(2) uv: vec2<f32>,
 };
 
 @vertex
 fn vs_main(
     @location(0) position: vec3<f32>,
     @location(1) normal: vec3<f32>,
+    @location(2) uv: vec2<f32>,
 ) -> VsOut {
     var out: VsOut;
     out.clip_pos = u.view_proj * u.model * vec4<f32>(position, 1.0);
     out.normal = (u.model * vec4<f32>(normal, 0.0)).xyz;
+    out.uv = uv;
     return out;
 }
 
@@ -501,6 +770,20 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let base = vec3<f32>(0.2, 0.6, 1.0);
     return vec4<f32>(base * diff, 1.0);
 }
+
+// Neural pipeline: samples the bound feed's latest decoded frame as the albedo.
+@group(1) @binding(0) var neural_tex: texture_2d<f32>;
+@group(1) @binding(1) var neural_sampler: sampler;
+
+@fragment
+fn fs_neural(in: VsOut) -> @location(0) vec4<f32> {
+    let n = normalize(in.normal);
+    let light = normalize(vec3<f32>(0.5, 0.8, 0.6));
+    let diff = max(dot(n, light), 0.0) * 0.8 + 0.2;
+    let base = vec3<f32>(0.2, 0.6, 1.0);
+    let albedo = textureSample(neural_tex, neural_sampler, in.uv).rgb;
+    return vec4<f32>(base * diff * albedo, 1.0);
+}
 "#;
 
 #[cfg(test)]
@@ -508,6 +791,20 @@ mod tests {
     use super::*;
     use nova_ecs::transform::{Camera, GlobalTransform};
     use nova_ecs::Vec3;
+
+    #[test]
+    fn cube_vertices_carry_in_range_uvs() {
+        // The neural albedo pipeline samples the cube by UV, so every vertex
+        // must carry a UV in [0,1] (regression guard for the added vertex attr).
+        let (vertices, _) = build_cube();
+        for (i, v) in vertices.iter().enumerate() {
+            assert!(
+                (0.0..=1.0).contains(&v.uv[0]) && (0.0..=1.0).contains(&v.uv[1]),
+                "vertex {i} uv out of range: {:?}",
+                v.uv
+            );
+        }
+    }
 
     #[test]
     fn cube_has_correct_topology() {
