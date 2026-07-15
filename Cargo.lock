@@ -2247,6 +2247,7 @@ version = "0.1.0"
 dependencies = [
  "fastembed",
  "nova-ecs",
+ "ort-sys",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
@@ -4591,9 +4592,12 @@ dependencies = [
  "base64 0.22.1",
  "log",
  "percent-encoding",
+ "rustls",
+ "rustls-pki-types",
  "socks",
  "ureq-proto",
  "utf8-zero",
+ "webpki-roots 1.0.8",
 ]
 
 [[package]]

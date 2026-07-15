@@ -11,7 +11,7 @@
 //! transforms with no network. A real provider is available behind the `llm`
 //! feature ([`HttpLlm`]), reading its endpoint/key from the environment.
 
-use crate::{apply_commands, AgentApiError, AgentCommand, EntityRef, World};
+use crate::{apply_commands, AgentCommand, EntityRef, World};
 use nova_overlay::AiFixRequest;
 
 /// Errors from LLM completion or command parsing.
@@ -308,21 +308,25 @@ mod tests {
         world.add_component(e, Transform::from_translation(Vec3::ZERO));
         world.add_component(e, GlobalTransform::identity());
 
-        struct EchoClient;
+        struct EchoClient {
+            entity_id: String,
+        }
         impl LlmClient for EchoClient {
             fn complete(&self, _prompt: &str) -> Result<String, LlmError> {
+                let id = &self.entity_id;
                 Ok(format!(
-                    "Sure, here are the commands:\n```json\n[{{\"op\":\"set_transform\",\"target\":{{\"id\":\"{e}\"}},\"translation\":[0.0,2.0,0.0],\"rotation_euler_xyz\":null,\"scale\":null}}]\n```"
+                    "Sure, here are the commands:\n```json\n[{{\"op\":\"set_transform\",\"target\":{{\"Id\":\"{id}\"}},\"translation\":[0.0,2.0,0.0],\"rotation_euler_xyz\":null,\"scale\":null}}]\n```"
                 ))
             }
         }
+        let client = EchoClient { entity_id: format!("{e}") };
         let req = AiFixRequest {
             region: [0.0, 0.0, 0.1, 0.1],
             entity_ids: vec![format!("{e}")],
             instruction: String::new(),
             prompt: String::new(),
         };
-        let n = apply_fix_with_llm(&mut world, &req, &EchoClient, "").unwrap();
+        let n = apply_fix_with_llm(&mut world, &req, &client, "").unwrap();
         assert_eq!(n, 1);
         let t = world.get_component::<Transform>(e).unwrap();
         assert!((t.translation.y - 2.0).abs() < 1e-4);
