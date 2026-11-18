@@ -1,0 +1,13 @@
+[package]
+name = "tpt-nova-input"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Keyboard/mouse input and action mapping for TPT Nova, wired into the ECS"
+readme = "README.md"
+keywords = ["input", "keyboard", "mouse", "action-map", "ecs"]
+categories = ["game-engines"]
+
+[dependencies]
+winit = "0.30"

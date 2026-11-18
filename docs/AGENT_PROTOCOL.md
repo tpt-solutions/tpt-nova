@@ -9,8 +9,8 @@ external AI agent. It covers three coordinated surfaces:
    RAG context wiring.
 
 All field names, limits, and defaults below were cross-checked against the
-source (`crates/nova-app`, `crates/nova-agent-api`, `crates/nova-telemetry`,
-`crates/nova-overlay`, `crates/nova-rag`). No Rust code was modified to produce
+source (`crates/tpt-nova-app`, `crates/tpt-nova-agent-api`, `crates/tpt-nova-telemetry`,
+`crates/tpt-nova-overlay`, `crates/tpt-nova-rag`). No Rust code was modified to produce
 this document.
 
 The loop in one sentence: **the agent reads `nova-telemetry.json`, decides on a
@@ -27,8 +27,8 @@ time changes, so the loop is fully decoupled from the engine's lifecycle.
 
 ### 1.1 Polling / hot-apply mechanism
 
-Both the editor shell (`nova-app`) and the reusable `ControlChannel`
-(`nova-agent-api`) implement the same watch semantics:
+Both the editor shell (`tpt-nova-app`) and the reusable `ControlChannel`
+(`tpt-nova-agent-api`) implement the same watch semantics:
 
 - Each tick the engine reads the file's `metadata.modified()` timestamp
   (milliseconds since the Unix epoch).
@@ -41,8 +41,8 @@ Both the editor shell (`nova-app`) and the reusable `ControlChannel`
 - Writing a **new** version (new mtime) replaces/extends the prior state — e.g.
   a second file with a different rotation overrides the first.
 
-> Implementation note: `nova-app::apply_control` (crates/nova-app/src/main.rs)
-> tracks `control_mtime: Option<u64>`; `nova-agent-api::ControlChannel` tracks
+> Implementation note: `tpt-nova-app::apply_control` (crates/tpt-nova-app/src/main.rs)
+> tracks `control_mtime: Option<u64>`; `tpt-nova-agent-api::ControlChannel` tracks
 > the same idea plus an `applied_count` accumulator.
 
 ### 1.2 Two control schemas
@@ -51,8 +51,8 @@ There are **two** control-file shapes in the tree. They are independent.
 
 #### (a) The editor shell's simple control file — default `nova-control.json`
 
-`nova-app` reads the default path `nova-control.json`
-(`crates/nova-app/src/main.rs` → `CONTROL_PATH`). Its schema is intentionally
+`tpt-nova-app` reads the default path `nova-control.json`
+(`crates/tpt-nova-app/src/main.rs` → `CONTROL_PATH`). Its schema is intentionally
 tiny — it rotates the world's cube entity:
 
 ```json
@@ -70,9 +70,9 @@ tiny — it rotates the world's cube entity:
 - This is the schema exercised by the editor shell and its regression test
   `ai_control_loop_hot_applies_rotation_and_is_idempotent`.
 
-#### (b) The formal protocol — `nova-agent-api::ControlFile`
+#### (b) The formal protocol — `tpt-nova-agent-api::ControlFile`
 
-`crates/nova-agent-api` formalizes the loop into a **versioned command batch**.
+`crates/tpt-nova-agent-api` formalizes the loop into a **versioned command batch**.
 Authoritative struct:
 
 ```rust
@@ -157,12 +157,12 @@ alive; unknown references yield `AgentApiError::UnknownEntity`.
 The engine emits a machine-readable snapshot of the whole ECS world so an agent
 can observe and self-correct. In the editor shell the default file is
 `nova-telemetry.json` and it is written **every 30 ticks**
-(`crates/nova-app/src/main.rs` → `TELEMETRY_INTERVAL = 30`, ≈ every 0.5 s at the
+(`crates/tpt-nova-app/src/main.rs` → `TELEMETRY_INTERVAL = 30`, ≈ every 0.5 s at the
 60 Hz fixed timestep).
 
 ### 2.1 Frame shape
 
-The frame is `nova_telemetry::TelemetryFrame`:
+The frame is `tpt_nova_telemetry::TelemetryFrame`:
 
 ```rust
 pub struct TelemetryFrame {
@@ -233,9 +233,9 @@ trailing newline.
 
 ### 2.3 Sinks
 
-`nova-telemetry` ships three `TelemetrySink`s:
+`tpt-nova-telemetry` ships three `TelemetrySink`s:
 
-- `FileSink` (default in `nova-app`; `nova-telemetry.json`) — pretty JSON.
+- `FileSink` (default in `tpt-nova-app`; `nova-telemetry.json`) — pretty JSON.
 - `MsgPackFileSink` — compact **MessagePack** blob (named fields, so it
   round-trips through the same serde types as JSON). Use for high-frequency /
   large payloads. Decode with `rmp_serde` or `encode_msgpack` + `from_slice`.
@@ -245,7 +245,7 @@ trailing newline.
 tick, seed)` emits only when `tick` is a multiple of the interval **and** isn't a
 repeat of the last emitted tick (no double-emit). The interval is clamped to at
 least 1. An agent reads the same frame back via
-`nova_agent_api::read_telemetry_file(path)`.
+`tpt_nova_agent_api::read_telemetry_file(path)`.
 
 ---
 
@@ -253,11 +253,11 @@ least 1. An agent reads the same frame back via
 
 ### 3.1 `ControlChannel` (the reusable hot-apply loop)
 
-`nova_agent_api::ControlChannel` is the host-side equivalent of the editor's
+`tpt_nova_agent_api::ControlChannel` is the host-side equivalent of the editor's
 file watch. Construct it with a path, then call `poll(&mut world)` each tick:
 
 ```rust
-use nova_agent_api::{ControlChannel, ControlFile, AgentCommand, EntityRef};
+use tpt_nova_agent_api::{ControlChannel, ControlFile, AgentCommand, EntityRef};
 
 let mut ch = ControlChannel::new("nova-control.json");
 let applied = ch.poll(&mut world)?;   // 0 if unchanged/absent, else #commands
@@ -271,17 +271,17 @@ directly without a file via `apply_command(&mut world, &cmd)` /
 
 ### 3.2 `RagAssistant` — RAG-backed context
 
-Behind the **`rag` feature** (`nova-agent-api`'s `rag` feature pulls in
-`nova-rag`), `nova_agent_api::rag::RagAssistant` gives an agent project context
-to ground its fixes. It wraps `nova_rag::RagAgent` (default top-k = 4):
+Behind the **`rag` feature** (`tpt-nova-agent-api`'s `rag` feature pulls in
+`tpt-nova-rag`), `tpt_nova_agent_api::rag::RagAssistant` gives an agent project context
+to ground its fixes. It wraps `tpt_nova_rag::RagAgent` (default top-k = 4):
 
 ```rust
-use nova_agent_api::rag::RagAssistant;
+use tpt_nova_agent_api::rag::RagAssistant;
 
 // Index a project tree (hidden / build dirs skipped; empty `extensions` = all):
 let assistant = RagAssistant::index_project(".", &["rs", "md", "toml"])?;
 
-// Or build from an already-loaded nova_rag::Index:
+// Or build from an already-loaded tpt_nova_rag::Index:
 let assistant = RagAssistant::from_index(index);
 
 let ctx = assistant.context_for("how do I move the highlighted cube?")?; // prompt-ready block
@@ -289,9 +289,9 @@ let hits = assistant.retrieve("physics collider rapier")?;               // Vec<
 ```
 
 - `RagAgent` / `Index` / `Document` / `ScoredHit` / `SearchError` come from
-  `nova-rag`. Embeddings are pluggable via the `Embedder` trait; the offline
+  `tpt-nova-rag`. Embeddings are pluggable via the `Embedder` trait; the offline
   default is `FeatureHashEmbedder` (deterministic, CI-friendly), with a real
-  local neural embedder behind `nova-rag`'s `real-embeddings` feature.
+  local neural embedder behind `tpt-nova-rag`'s `real-embeddings` feature.
 - `context_for(query)` returns exactly the string an agent would paste above its
   instruction before emitting `AgentCommand`s — it includes the retrieved text
   plus `score=` lines so the agent can cite sources.
@@ -302,7 +302,7 @@ let hits = assistant.retrieve("physics collider rapier")?;               // Vec<
 
 ## 4. Highlight & Fix Overlay Flow
 
-`crates/nova-overlay` turns a viewport marquee into a structured fix request an
+`crates/tpt-nova-overlay` turns a viewport marquee into a structured fix request an
 agent can act on. The renderer draws the rectangle; the crate owns the logic
 (region math, entity picking, prompt assembly) — fully testable without a GPU.
 
@@ -367,10 +367,10 @@ agent can act on. The renderer draws the rectangle; the crate owns the logic
 ## 5. Reference Implementation: the Agent Fix Loop
 
 The end-to-end loop (highlight → RAG → command → applied) is demonstrated by the
-**`agent_fix_loop` example** in `nova-agent-api`:
+**`agent_fix_loop` example** in `tpt-nova-agent-api`:
 
 ```sh
-cargo run -p nova-agent-api --example agent_fix_loop --features rag
+cargo run -p tpt-nova-agent-api --example agent_fix_loop --features rag
 ```
 
 It runs headless (no GPU): it drags a `SelectionTool` marquee around a cube,
@@ -380,11 +380,11 @@ highlighted entity actually moved. This is the canonical reference for wiring
 all three surfaces together.
 
 > Discrepancy note: the task brief referred to this as *"`cargo run -p
-> nova-sample-game` `agent_fix_loop`"*. In the current tree, `nova-sample-game`
-> is a separate **headless pipeline demo** (`cargo run -p nova-sample-game`,
+> tpt-nova-sample-game` `agent_fix_loop`"*. In the current tree, `tpt-nova-sample-game`
+> is a separate **headless pipeline demo** (`cargo run -p tpt-nova-sample-game`,
 > `run_pipeline()` — physics rest, scene save/reload, agent spawn/move,
 > splat→collider, asset pack) and does **not** contain `agent_fix_loop`. The
-> flagship agent-fix-loop demo lives in `nova-agent-api` (see exact command
+> flagship agent-fix-loop demo lives in `tpt-nova-agent-api` (see exact command
 > above). Worth reconciling in docs/todo.
 
 ---
@@ -393,17 +393,17 @@ all three surfaces together.
 
 | Item | Value / type | Source |
 | --- | --- | --- |
-| Default control path | `nova-control.json` | nova-app `CONTROL_PATH` |
-| Default telemetry path | `nova-telemetry.json` | nova-app `TELEMETRY_INTERVAL`, `default_telemetry_path()` |
-| Telemetry interval | every **30 ticks** (~0.5 s @ 60 Hz) | nova-app `TELEMETRY_INTERVAL` |
-| Telemetry `schema_version` | `1` | nova-telemetry `dump_world` |
-| Protocol version | `PROTOCOL_VERSION = 1` | nova-agent-api |
-| Control file size cap | **1 MiB** (`MAX_CONTROL_FILE_BYTES`) | nova-agent-api |
-| Commands per poll cap | **10_000** (`MAX_COMMANDS_PER_POLL`) | nova-agent-api |
-| Command set | `spawn`, `despawn`, `set_transform`, `set_rotation` | nova-agent-api `AgentCommand` |
-| Entity ref | `{"id":"e#g"}` or `{"name":"..."}` | nova-agent-api `EntityRef` |
-| Rotation convention | Euler XYZ, **radians** | nova-agent-api / nova-app `EulerRot::XYZ` |
-| Idempotency | mtime-watched; applied once per write | nova-app `apply_control`, `ControlChannel::poll` |
+| Default control path | `nova-control.json` | tpt-nova-app `CONTROL_PATH` |
+| Default telemetry path | `nova-telemetry.json` | tpt-nova-app `TELEMETRY_INTERVAL`, `default_telemetry_path()` |
+| Telemetry interval | every **30 ticks** (~0.5 s @ 60 Hz) | tpt-nova-app `TELEMETRY_INTERVAL` |
+| Telemetry `schema_version` | `1` | tpt-nova-telemetry `dump_world` |
+| Protocol version | `PROTOCOL_VERSION = 1` | tpt-nova-agent-api |
+| Control file size cap | **1 MiB** (`MAX_CONTROL_FILE_BYTES`) | tpt-nova-agent-api |
+| Commands per poll cap | **10_000** (`MAX_COMMANDS_PER_POLL`) | tpt-nova-agent-api |
+| Command set | `spawn`, `despawn`, `set_transform`, `set_rotation` | tpt-nova-agent-api `AgentCommand` |
+| Entity ref | `{"id":"e#g"}` or `{"name":"..."}` | tpt-nova-agent-api `EntityRef` |
+| Rotation convention | Euler XYZ, **radians** | tpt-nova-agent-api / tpt-nova-app `EulerRot::XYZ` |
+| Idempotency | mtime-watched; applied once per write | tpt-nova-app `apply_control`, `ControlChannel::poll` |
 
 ### Minimal working example (formal protocol)
 

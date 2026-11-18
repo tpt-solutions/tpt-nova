@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# scaffold_sample_game.sh — Fork nova-sample-game into a new standalone project.
+# scaffold_sample_game.sh — Fork tpt-nova-sample-game into a new standalone project.
 #
-# Copies crates/nova-sample-game into a user-supplied target directory and
+# Copies crates/tpt-nova-sample-game into a user-supplied target directory and
 # performs a best-effort, project-name rename across Cargo.toml and the Rust
 # sources. This replaces the manual copy/rename-by-hand flow.
 #
@@ -37,7 +37,7 @@ find_repo_root() {
 }
 
 TARGET="${1:-}"
-SOURCE="${2:-crates/nova-sample-game}"
+SOURCE="${2:-crates/tpt-nova-sample-game}"
 
 if [ -z "$TARGET" ]; then
     echo "Usage: $0 <target-path> [source-crate]" >&2
@@ -60,8 +60,8 @@ NEW_NAME="$(basename "$DEST_PATH" | tr '[:upper:]' '[:lower:]')"
 NEW_LIB="${NEW_NAME//-/_}"
 
 # Old identifiers.
-OLD_NAME="nova-sample-game"
-OLD_LIB="nova_sample_game"
+OLD_NAME="tpt-nova-sample-game"
+OLD_LIB="tpt_nova_sample_game"
 
 echo "Repo root : $REPO_ROOT"
 echo "Source    : $SOURCE_PATH"

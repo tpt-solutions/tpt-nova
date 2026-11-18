@@ -89,13 +89,13 @@ jobs:
 
       # Exercise the optional feature flags that the default `cargo test
       # --workspace` run never enables, so regressions in these code paths are
-      # caught. The nova-rag `real-embeddings` test is `#[ignore]` (it downloads
+      # caught. The tpt-nova-rag `real-embeddings` test is `#[ignore]` (it downloads
       # a model), so it compiles + runs the offline tests without network.
       - name: Test optional features
         run: |
-          cargo test -p nova-rag --features real-embeddings
-          cargo test -p nova-agent-api --features rag
-          cargo test -p nova-splat --features render
+          cargo test -p tpt-nova-rag --features real-embeddings
+          cargo test -p tpt-nova-agent-api --features rag
+          cargo test -p tpt-nova-splat --features render
 
   coverage:
     name: coverage (tarpaulin)

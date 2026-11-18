@@ -1,0 +1,13 @@
+[package]
+name = "tpt-nova-xtask"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Developer task runner for TPT Nova (readiness checks, scaffolding helpers)"
+readme = "README.md"
+keywords = ["xtask", "developer-tools", "build", "workspace", "doctor"]
+categories = ["development-tools"]
+publish = false
+
+[dependencies]

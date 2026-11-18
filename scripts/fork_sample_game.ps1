@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-    Fork nova-sample-game into a new standalone project.
+    Fork tpt-nova-sample-game into a new standalone project.
 
 .DESCRIPTION
-    Copies crates/nova-sample-game into a new directory under $OutDir, rewrites
+    Copies crates/tpt-nova-sample-game into a new directory under $OutDir, rewrites
     the crate name in its Cargo.toml, and prints the next steps. This replaces
     the manual copy/rename-by-hand flow described in the onboarding docs.
 
@@ -26,7 +26,7 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot '..')
-$Src = Join-Path $RepoRoot 'crates' 'nova-sample-game'
+$Src = Join-Path $RepoRoot 'crates' 'tpt-nova-sample-game'
 if (-not (Test-Path $Src)) {
     Write-Error "source not found: $Src"
 }
@@ -36,12 +36,12 @@ if (Test-Path $Dst) {
     Write-Error "destination already exists: $Dst"
 }
 
-Write-Host "Forking nova-sample-game -> $Dst"
+Write-Host "Forking tpt-nova-sample-game -> $Dst"
 Copy-Item -Recurse -Force $Src $Dst
 
 $Cargo = Join-Path $Dst 'Cargo.toml'
 if (Test-Path $Cargo) {
-    (Get-Content $Cargo) -replace 'name = "nova-sample-game"', "name = `"$Name`"" |
+    (Get-Content $Cargo) -replace 'name = "tpt-nova-sample-game"', "name = `"$Name`"" |
         Set-Content $Cargo
     Write-Host "  rewrote crate name in $Cargo"
 }

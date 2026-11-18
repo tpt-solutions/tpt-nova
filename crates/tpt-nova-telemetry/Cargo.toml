@@ -1,0 +1,19 @@
+[package]
+name = "tpt-nova-telemetry"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Structured JSON/MessagePack telemetry for TPT Nova's AI-observable engine state"
+readme = "README.md"
+keywords = ["telemetry", "json", "messagepack", "observability", "ai"]
+categories = ["development-tools", "game-engines"]
+
+[dependencies]
+tpt-nova-ecs = { workspace = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rmp-serde = "1"
+
+[dev-dependencies]
+tpt-nova-physics = { workspace = true }

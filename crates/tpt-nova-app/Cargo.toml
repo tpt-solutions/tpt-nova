@@ -1,0 +1,33 @@
+[package]
+name = "tpt-nova-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TPT Nova runtime application shell (winit + wgpu + ECS)"
+readme = "README.md"
+keywords = ["winit", "wgpu", "game-engine", "editor", "ecs"]
+categories = ["game-engines", "graphics"]
+
+[[bin]]
+name = "tpt-nova-app"
+path = "src/main.rs"
+
+[dependencies]
+tpt-nova-ecs = { workspace = true }
+tpt-nova-input = { path = "../tpt-nova-input" }
+tpt-nova-render = { path = "../tpt-nova-render", features = ["neural"] }
+tpt-nova-telemetry = { path = "../tpt-nova-telemetry" }
+tpt-nova-ui = { path = "../tpt-nova-ui" }
+tpt-nova-editor = { path = "../tpt-nova-editor" }
+tpt-nova-overlay = { path = "../tpt-nova-overlay" }
+tpt-nova-neural-materials = { path = "../tpt-nova-neural-materials" }
+tpt-nova-scene = { path = "../tpt-nova-scene" }
+
+winit = "0.30"
+glam = "0.29"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+log = "0.4"
+env_logger = "0.11"

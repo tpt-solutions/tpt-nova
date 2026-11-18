@@ -1,0 +1,13 @@
+[package]
+name = "tpt-nova-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Immediate-mode 2D UI for TPT Nova: panels, buttons, and text emitted as a renderer-agnostic draw list"
+readme = "README.md"
+keywords = ["ui", "immediate-mode", "gui", "draw-list", "widgets"]
+categories = ["gui", "game-engines"]
+
+[dependencies]
+glam = { version = "0.29", features = ["std"] }

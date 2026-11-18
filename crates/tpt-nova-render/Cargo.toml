@@ -1,0 +1,31 @@
+[package]
+name = "tpt-nova-render"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "wgpu-based rendering for TPT Nova"
+readme = "README.md"
+keywords = ["wgpu", "rendering", "pbr", "sprites", "graphics"]
+categories = ["graphics", "rendering"]
+
+[dependencies]
+tpt-nova-ecs = { workspace = true }
+tpt-nova-ui = { workspace = true }
+wgpu = "30"
+winit = "0.30"
+glam = { version = "0.29", features = ["bytemuck"] }
+bytemuck = "1"
+pollster = "0.3"
+anyhow = "1"
+log = "0.4"
+
+[features]
+default = []
+# Wires a live `tpt-nova-neural-materials` feed onto in-scene surfaces: entities with
+# a `MaterialBinding` get their latest decoded frame uploaded as an albedo texture.
+neural = ["tpt-nova-neural-materials"]
+
+[dependencies.tpt-nova-neural-materials]
+workspace = true
+optional = true

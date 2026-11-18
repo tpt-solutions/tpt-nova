@@ -1,0 +1,35 @@
+[package]
+name = "tpt-nova-agent-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Stable external-AI-agent control API for the TPT Nova engine (telemetry read + command apply loop)"
+readme = "README.md"
+keywords = ["ai-agents", "control-api", "game-engine", "ecs", "telemetry"]
+categories = ["game-engines", "development-tools"]
+
+[dependencies]
+tpt-nova-ecs = { workspace = true }
+tpt-nova-telemetry = { workspace = true }
+tpt-nova-rag = { workspace = true, optional = true }
+tpt-nova-overlay = { path = "../tpt-nova-overlay" }
+glam = { version = "0.29", features = ["std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+reqwest = { version = "0.12", optional = true, features = ["blocking", "json"] }
+
+[dev-dependencies]
+tpt-nova-overlay = { path = "../tpt-nova-overlay" }
+
+[features]
+default = []
+# Exposes `rag`: a RAG-backed retrieval assistant wired into the agent loop.
+rag = ["dep:tpt-nova-rag"]
+# Exposes `llm`: a real HTTP LLM client (reads NOVA_LLM_ENDPOINT / NOVA_LLM_KEY).
+llm = ["dep:reqwest"]
+
+[[example]]
+name = "agent_fix_loop"
+required-features = ["rag"]

@@ -1,0 +1,19 @@
+[package]
+name = "tpt-nova-scripting"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Hot-reloadable Rust gameplay modules for TPT Nova: stable C-ABI boundary + dylib reload watcher"
+readme = "README.md"
+keywords = ["hot-reload", "dylib", "scripting", "ffi", "gameplay"]
+categories = ["game-engines", "external-ffi-bindings"]
+
+[dependencies]
+tpt-nova-ecs = { workspace = true }
+libloading = "0.8"
+log = "0.4"
+
+[dev-dependencies]
+tpt-nova-gameplay-example = { path = "../tpt-nova-gameplay-example" }
+tpt-nova-input = { workspace = true }

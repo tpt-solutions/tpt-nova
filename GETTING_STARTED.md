@@ -27,7 +27,7 @@ The first build pulls and compiles a few heavier dependencies (Rapier physics,
 ## 3. Run the editor (see a window)
 
 ```sh
-cargo run -p nova-app
+cargo run -p tpt-nova-app
 ```
 
 You should see a window titled **"TPT Nova — Editor"** containing:
@@ -65,14 +65,14 @@ magnitude, and watch the live `gravity y` read-out update.
 > **Screenshots / clip:** A short capture of the running editor (the cube
 > viewport with the Hierarchy / Inspector / Assets / Vibe panels and the
 > Highlight & Fix marquee) is an outstanding `ALPHA_CHECKLIST.md` release-gate
-> item. It requires a **manual capture** step (run `cargo run -p nova-app` on a
+> item. It requires a **manual capture** step (run `cargo run -p tpt-nova-app` on a
 > machine with a GPU, then grab a frame) — drop the image here and reference it
 > once captured.
 >
 > ![TPT Nova editor](docs/editor_screenshot.png)
 
-The editor is fully wired to the renderer: every panel is a `nova-ui`
-`DrawList` composited over the 3D scene by `nova-render`'s `UiOverlay` pass, so
+The editor is fully wired to the renderer: every panel is a `tpt-nova-ui`
+`DrawList` composited over the 3D scene by `tpt-nova-render`'s `UiOverlay` pass, so
 what you see is the real, interactive engine — not a mock-up.
 
 ## 4. Run the headless pipeline demo
@@ -82,14 +82,14 @@ No GPU required for the end-to-end sample that exercises the *whole* pipeline
 + asset packaging):
 
 ```sh
-cargo run -p nova-sample-game
+cargo run -p tpt-nova-sample-game
 ```
 
 ## 5. Ingest a mesh (zero-config)
 
 ```sh
-cargo run -p nova-ingest --bin ingest_demo        # uses assets/cube.glb
-cargo run -p nova-ingest --bin ingest_demo my_model.glb
+cargo run -p tpt-nova-ingest --bin ingest_demo        # uses assets/cube.glb
+cargo run -p tpt-nova-ingest --bin ingest_demo my_model.glb
 ```
 
 This loads the mesh, auto-generates a convex-decomposition collider and an
@@ -110,7 +110,7 @@ before opening a PR (see `CONTRIBUTING.md`).
 - Read the [README](README.md) for the crate map and the self-debugging loop.
 - Read [todo.md](todo.md) for the full roadmap and what "Alpha" means here.
 - The engine is AI-native: an external agent can read telemetry and hot-apply
-  changes via a control file — see `nova-agent-api` and the
+  changes via a control file — see `tpt-nova-agent-api` and the
   [Agent Protocol reference](docs/AGENT_PROTOCOL.md).
 - Want to build your own game on the engine? Fork the sample project instead of
   copying it by hand: `pwsh scripts/fork_sample_game.ps1 -Name my-game`.

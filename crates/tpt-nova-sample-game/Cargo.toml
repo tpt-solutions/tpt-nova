@@ -1,0 +1,18 @@
+[package]
+name = "tpt-nova-sample-game"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "End-to-end sample game demonstrating the full TPT Nova pipeline (ECS + physics + scene + agent API + splats + export)"
+readme = "README.md"
+keywords = ["sample", "template", "game", "pipeline", "demo"]
+categories = ["game-engines", "game-development"]
+
+[dependencies]
+tpt-nova-ecs = { workspace = true }
+tpt-nova-ingest = { workspace = true }
+tpt-nova-scene = { workspace = true }
+tpt-nova-agent-api = { workspace = true }
+tpt-nova-splat = { workspace = true }
+tpt-nova-export = { workspace = true }

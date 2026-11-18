@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-    Fork nova-sample-game into a new standalone project.
+    Fork tpt-nova-sample-game into a new standalone project.
 
 .DESCRIPTION
-    Copies crates/nova-sample-game into a user-supplied target directory and
+    Copies crates/tpt-nova-sample-game into a user-supplied target directory and
     performs a best-effort, project-name rename across Cargo.toml and the Rust
     sources. This replaces the manual copy/rename-by-hand flow described in the
     project README.
@@ -16,7 +16,7 @@
     component is used as the new crate name, e.g. "../my-game" -> "my-game".
 
 .PARAMETER Source
-    Source crate to fork. Defaults to "crates/nova-sample-game" relative to the
+    Source crate to fork. Defaults to "crates/tpt-nova-sample-game" relative to the
     repository root (the script resolves the repo root automatically).
 
 .EXAMPLE
@@ -26,7 +26,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$Target,
 
-    [string]$Source = "crates/nova-sample-game"
+    [string]$Source = "crates/tpt-nova-sample-game"
 )
 
 $ErrorActionPreference = "Stop"
@@ -72,9 +72,9 @@ $newName = Split-Path -Leaf $destPath
 $newName = $newName.ToLowerInvariant()
 $newLib = $newName -replace '-', '_'
 
-# Old identifiers (nova-sample-game -> nova_sample_game).
-$oldName = "nova-sample-game"
-$oldLib = "nova_sample_game"
+# Old identifiers (tpt-nova-sample-game -> tpt_nova_sample_game).
+$oldName = "tpt-nova-sample-game"
+$oldLib = "tpt_nova_sample_game"
 
 Write-Host "Repo root : $repoRoot"
 Write-Host "Source    : $sourcePath"

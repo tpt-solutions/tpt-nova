@@ -1,0 +1,31 @@
+[package]
+name = "tpt-nova-rag"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Local vector-DB + RAG retrieval for TPT Nova: index project assets/docs and answer context queries"
+readme = "README.md"
+keywords = ["rag", "vector-search", "embeddings", "retrieval", "ai"]
+categories = ["algorithms", "development-tools"]
+
+[dependencies]
+tpt-nova-ecs = { workspace = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+# Optional real local embedding model (neural, runs inference locally after a
+# one-time model download). Not in the default feature set so the offline
+# FeatureHashEmbedder remains the CI/default path.
+fastembed = { version = "3", optional = true }
+# ort-sys is an indirect dep via fastembed/ort; declared here so we can add the
+# tls-native feature that ort-sys's build script requires when download-binaries
+# is active (ort 2.x rc series does not expose TLS pass-throughs on the ort crate).
+ort-sys = { version = "=2.0.0-rc.12", features = ["tls-rustls"], optional = true }
+
+[features]
+default = []
+# Swaps in a real sentence-embedding model (fastembed's local All-MiniLM-L6-v2)
+# behind `RealEmbedder`. Enabling this downloads model weights on first use
+# (network required once); inference itself is fully local with no API calls.
+real-embeddings = ["dep:fastembed", "dep:ort-sys"]

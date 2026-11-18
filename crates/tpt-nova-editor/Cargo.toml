@@ -1,0 +1,16 @@
+[package]
+name = "tpt-nova-editor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TPT Nova scene/level editor v1: hierarchy, component inspector, 2D gizmos, and the Vibe GUI curve editor"
+readme = "README.md"
+keywords = ["editor", "inspector", "gizmo", "level-editor", "ecs"]
+categories = ["game-engines", "development-tools"]
+
+[dependencies]
+tpt-nova-ecs = { workspace = true }
+tpt-nova-physics = { workspace = true }
+tpt-nova-ui = { workspace = true }
+glam = { version = "0.29", features = ["std"] }

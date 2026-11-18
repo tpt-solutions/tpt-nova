@@ -1,56 +1,56 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/nova-ecs",
-    "crates/nova-telemetry",
-    "crates/nova-render",
-    "crates/nova-input",
-    "crates/nova-physics",
-    "crates/nova-scene",
-    "crates/nova-audio",
-    "crates/nova-scripting",
-    "crates/nova-gameplay-example",
-    "crates/nova-ui",
-    "crates/nova-editor",
-    "crates/nova-anim",
-    "crates/nova-ingest",
-    "crates/nova-app",
-    "crates/nova-neural-materials",
-    "crates/nova-scripting-embedded",
-    "crates/nova-splat",
-    "crates/nova-rag",
-    "crates/nova-export",
-    "crates/nova-agent-api",
-    "crates/nova-overlay",
-    "crates/nova-videocap",
-    "crates/nova-sample-game",
-    "crates/xtask",
+    "crates/tpt-nova-ecs",
+    "crates/tpt-nova-telemetry",
+    "crates/tpt-nova-render",
+    "crates/tpt-nova-input",
+    "crates/tpt-nova-physics",
+    "crates/tpt-nova-scene",
+    "crates/tpt-nova-audio",
+    "crates/tpt-nova-scripting",
+    "crates/tpt-nova-gameplay-example",
+    "crates/tpt-nova-ui",
+    "crates/tpt-nova-editor",
+    "crates/tpt-nova-anim",
+    "crates/tpt-nova-ingest",
+    "crates/tpt-nova-app",
+    "crates/tpt-nova-neural-materials",
+    "crates/tpt-nova-scripting-embedded",
+    "crates/tpt-nova-splat",
+    "crates/tpt-nova-rag",
+    "crates/tpt-nova-export",
+    "crates/tpt-nova-agent-api",
+    "crates/tpt-nova-overlay",
+    "crates/tpt-nova-videocap",
+    "crates/tpt-nova-sample-game",
+    "crates/tpt-nova-xtask",
 ]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-license = "Apache-2.0"
+license = "MIT OR Apache-2.0"
 repository = "https://github.com/tpt-nova/tpt-nova"
 
 [workspace.dependencies]
-nova-ecs = { path = "crates/nova-ecs" }
-nova-telemetry = { path = "crates/nova-telemetry" }
-nova-render = { path = "crates/nova-render" }
-nova-physics = { path = "crates/nova-physics" }
-nova-scene = { path = "crates/nova-scene" }
-nova-input = { path = "crates/nova-input" }
-nova-audio = { path = "crates/nova-audio" }
-nova-ui = { path = "crates/nova-ui" }
-nova-scripting = { path = "crates/nova-scripting" }
-nova-anim = { path = "crates/nova-anim" }
-nova-ingest = { path = "crates/nova-ingest" }
-nova-neural-materials = { path = "crates/nova-neural-materials" }
-nova-scripting-embedded = { path = "crates/nova-scripting-embedded" }
-nova-splat = { path = "crates/nova-splat" }
-nova-rag = { path = "crates/nova-rag" }
-nova-export = { path = "crates/nova-export" }
-nova-agent-api = { path = "crates/nova-agent-api" }
-nova-overlay = { path = "crates/nova-overlay" }
-nova-videocap = { path = "crates/nova-videocap" }
-nova-sample-game = { path = "crates/nova-sample-game" }
+tpt-nova-ecs = { path = "crates/tpt-nova-ecs" }
+tpt-nova-telemetry = { path = "crates/tpt-nova-telemetry" }
+tpt-nova-render = { path = "crates/tpt-nova-render" }
+tpt-nova-physics = { path = "crates/tpt-nova-physics" }
+tpt-nova-scene = { path = "crates/tpt-nova-scene" }
+tpt-nova-input = { path = "crates/tpt-nova-input" }
+tpt-nova-audio = { path = "crates/tpt-nova-audio" }
+tpt-nova-ui = { path = "crates/tpt-nova-ui" }
+tpt-nova-scripting = { path = "crates/tpt-nova-scripting" }
+tpt-nova-anim = { path = "crates/tpt-nova-anim" }
+tpt-nova-ingest = { path = "crates/tpt-nova-ingest" }
+tpt-nova-neural-materials = { path = "crates/tpt-nova-neural-materials" }
+tpt-nova-scripting-embedded = { path = "crates/tpt-nova-scripting-embedded" }
+tpt-nova-splat = { path = "crates/tpt-nova-splat" }
+tpt-nova-rag = { path = "crates/tpt-nova-rag" }
+tpt-nova-export = { path = "crates/tpt-nova-export" }
+tpt-nova-agent-api = { path = "crates/tpt-nova-agent-api" }
+tpt-nova-overlay = { path = "crates/tpt-nova-overlay" }
+tpt-nova-videocap = { path = "crates/tpt-nova-videocap" }
+tpt-nova-sample-game = { path = "crates/tpt-nova-sample-game" }

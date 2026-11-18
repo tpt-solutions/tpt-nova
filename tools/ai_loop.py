@@ -3,13 +3,13 @@
 
 This script demonstrates the closed-loop self-debugging described in the spec:
 
-  1. Read `nova-telemetry.json` (emitted by nova-app on an interval).
+  1. Read `nova-telemetry.json` (emitted by tpt-nova-app on an interval).
   2. Find the cube entity's current rotation (Euler XYZ) from its Transform.
   3. Nudge the yaw by a small delta (the "AI decision").
   4. Write `nova-control.json` so the running engine hot-applies the new rotation
      without a restart.
 
-Run nova-app in one terminal, then run this script in another:
+Run tpt-nova-app in one terminal, then run this script in another:
 
     python3 tools/ai_loop.py
 
@@ -26,7 +26,7 @@ ROOT = os.path.dirname(HERE)
 TELEMETRY = os.path.join(ROOT, "nova-telemetry.json")
 CONTROL = os.path.join(ROOT, "nova-control.json")
 
-# Euler XYZ order must match glam::EulerRot::XYZ used in nova-app.
+# Euler XYZ order must match glam::EulerRot::XYZ used in tpt-nova-app.
 DELTA_YAW = 0.15  # radians per cycle
 SLEEP = 0.5       # seconds between cycles
 
