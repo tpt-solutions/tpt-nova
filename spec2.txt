@@ -1,0 +1,221 @@
+Design Specification: tpt-nova-drivers
+Version: 0.1.0
+Status: Draft / Architectural Baseline
+License: MIT (Strictly MIT-only; no Apache-2.0, no GPL, no copy-left dependencies)
+Ecosystem Layer: Layer 4 (Core Runtime Extension within tpt-nova workspace)
+Location: Crate within the tpt-nova repository (not a separate repo)
+1. Vision & Philosophy
+"The simulation that heals itself."
+tpt-nova-drivers is the dynamic, hot-swappable behavior layer of the tpt-nova runtime. It transforms tpt-nova from a static ECS engine into a self-healing, AI-evolvable simulation platform where component behavior can be modified, replaced, generated, and verified at runtime — without recompilation, without restart, and without downtime.
+Traditional engines treat component behavior as compiled, immutable code. tpt-nova-drivers treats behavior as data — versioned, sandboxed, migratable, and subject to symbolic verification. This is the foundational primitive that enables:
+Self-debugging agent loops — the engine detects anomalies and proposes fixes.
+AI-native evolution — agents generate, test, and deploy optimized drivers.
+Zero-downtime patching — behavior updates without stopping the simulation.
+Community plugin ecosystems — drivers shared as portable, sandboxed modules.
+2. Architectural Positioning
+tpt-nova-drivers sits at the intersection of the ECS, the AI runtime (tpt-anima), and the verification layer (tpt-telos). It is the bridge between static data and dynamic behavior.
+┌─────────────────────────────────────────────────────────┐
+│                    tpt-nova Runtime                     │
+│  ┌───────────────────────────────────────────────────┐  │
+│  │              ECS World (Components)               │  │
+│  └───────────────────────────────────────────────────┘  │
+│                         │                               │
+│                         ▼                               │
+│  ┌───────────────────────────────────────────────────┐  │
+│  │           tpt-nova-drivers (THIS CRATE)           │  │
+│  │  ┌─────────────┬──────────────┬────────────────┐  │  │
+│  │  │  Registry   │  Sandbox     │  Migration     │  │  │
+│  │  │  (lookup)   │  (WASM/      │  (schema       │  │  │
+│  │  │             │   native)    │   evolution)   │  │  │
+│  │  └─────────────┴──────────────┴────────────────┘  │  │
+│  └───────────────────────────────────────────────────┘  │
+│        │                    │                  │        │
+│        ▼                    ▼                  ▼        │
+│  ┌──────────┐        ┌──────────┐       ┌──────────┐   │
+│  │tpt-anima │        │tpt-telos │       │tpt-eve   │   │
+│  │(AI agent)│        │(verify)  │       │(generate)│   │
+│  └──────────┘        └──────────┘       └──────────┘   │
+└─────────────────────────────────────────────────────────┘
+
+Core Invariants
+No driver executes outside its capability sandbox.
+No driver is loaded without passing symbolic verification.
+No schema migration occurs without a registered migration path.
+Every driver has a version; rollback is always possible.
+3. Core Subsystems
+3.1. drivers-registry (The Lookup Layer)
+A lock-free, concurrent registry mapping (ComponentTypeId, DriverVersion) → DriverHandle.
+Role: Resolves which driver instance executes for a given component at a given frame.
+Feature: Supports atomic hot-swap — a new driver version is registered, and the next frame transparently uses it.
+Data Structure: ArcSwap-based for zero-contention reads during the hot path.
+3.2. drivers-sandbox (The Safety Layer)
+A capability-based execution environment aligned with tpt-archon principles.
+Role: Ensures drivers cannot corrupt world state, escape their component scope, or perform unauthorized I/O.
+Execution Modes:
+Native mode — compiled Rust code, loaded via libloading, for maximum performance.
+WASM mode — sandboxed via wasmtime, for untrusted/community drivers.
+Capability Tokens: Drivers declare required capabilities (e.g., ReadNeighbors, WritePhysics, EmitEvents). The world grants or denies at load time.
+3.3. drivers-migration (The Schema Evolution Layer)
+Handles component data structure changes across driver versions.
+Role: When a component's schema changes (field added, type modified), migration functions transform old data into the new format.
+Feature: Migration chains — v1 → v2 → v3 — composed automatically.
+Verification: Every migration function must pass tpt-telos proofs that it preserves invariants (e.g., "total energy is conserved across migration").
+3.4. drivers-lifecycle (The Versioning Layer)
+Manages driver versions, rollback, and A/B testing.
+Role: Tracks which entities use which driver version. Supports gradual rollout.
+Feature: Shadow execution — a new driver runs in parallel on a subset of entities; results are compared before promotion.
+Rollback: One-call revert to any prior verified version.
+3.5. drivers-agent (The AI Integration Layer)
+The bridge to tpt-anima and tpt-eve for self-debugging and AI-driven evolution.
+Role: Exposes hooks for AI agents to observe, propose, and deploy driver changes.
+Feature: Anomaly detection → driver generation → sandboxed test → verification → deployment.
+4. The Self-Debugging Loop
+This is the killer feature. The loop operates per-component, per-frame:
+1. OBSERVE
+   └─ drivers-agent monitors component state against
+      tpt-telos invariants (e.g., "velocity bounded",
+      "position finite", "energy conserved").
+
+2. DETECT
+   └─ If an invariant is violated, flag the component
+      as anomalous. Record the execution trace.
+
+3. PROPOSE
+   └─ tpt-eve (symbolic reasoning) analyzes the trace
+      and generates candidate driver patches.
+   └─ tpt-crucible compiles candidates to WASM or native.
+
+4. VERIFY
+   └─ tpt-telos symbolically verifies each candidate
+      against the component's invariant suite.
+   └─ Reject any candidate that cannot be proven safe.
+
+5. TEST (Shadow Execution)
+   └─ Surviving candidates run in parallel on a
+      shadow copy of the component for N frames.
+   └─ Compare shadow results against baseline.
+
+6. DEPLOY
+   └─ If shadow passes, atomically hot-swap the driver
+      via drivers-registry.
+   └─ Log the fix. Persist to tpt-vectis build cache
+      for future builds.
+
+7. LEARN
+   └─ Feed the successful fix back into tpt-eve's
+      knowledge base for future anomaly patterns.
+Result: The simulation heals itself. No human intervention. No restart. No recompilation.
+5. Driver Interface (Core Trait)
+rust
+
+123456789101112131415161718192021222324252627282930
+6. Strict Dependency & Licensing Policy
+Aligned with tpt-vectis and the broader tpt ecosystem:
+Crate License: MIT only.
+Allowed Dependency Licenses: MIT, BSD-2-Clause, BSD-3-Clause, ISC, Unicode-DFS-*.
+Banned Dependency Licenses: Apache-2.0, GPL-*, AGPL-*, LGPL-*, MPL-*, SSPL, BSL.
+Sandbox Runtime: wasmtime (Apache-2.0 licensed — exception required).
+Mitigation: wasmtime is an optional feature (feature = "wasm-sandbox"). Core crate remains MIT-only. Users who need community driver support opt in explicitly.
+Enforcement: cargo-deny configuration in the tpt-nova workspace root.
+7. Data Flow: A Driver's Lifetime
+
+┌──────────────────────────────────────────────────────────┐
+│ 1. AUTHORING (tpt-vectis / tpt-eve)                      │
+│    Developer or AI agent writes driver code.             │
+└──────────────────────────────────────────────────────────┘
+                           │
+                           ▼
+┌──────────────────────────────────────────────────────────┐
+│ 2. VERIFICATION (tpt-telos)                              │
+│    Symbolic proofs verify driver preserves invariants.   │
+└──────────────────────────────────────────────────────────┘
+                           │
+                           ▼
+┌──────────────────────────────────────────────────────────┐
+│ 3. COMPILATION (tpt-crucible)                            │
+│    Driver compiled to native lib OR WASM module.         │
+└──────────────────────────────────────────────────────────┘
+                           │
+                           ▼
+┌──────────────────────────────────────────────────────────┐
+│ 4. DISTRIBUTION (tpt-vectis)                             │
+│    Driver packaged into asset bundle, content-addressed. │
+└──────────────────────────────────────────────────────────┘
+                           │
+                           ▼
+┌──────────────────────────────────────────────────────────┐
+│ 5. LOADING (tpt-nova-drivers)                            │
+│    Registry loads driver, verifies capabilities,         │
+│    assigns to target components.                         │
+└──────────────────────────────────────────────────────────┘
+                           │
+                           ▼
+┌──────────────────────────────────────────────────────────┐
+│ 6. EXECUTION (per-frame)                                 │
+│    Driver.update() called for each bound entity.         │
+│    Anomaly monitor observes state.                       │
+└──────────────────────────────────────────────────────────┘
+                           │
+                           ▼
+┌──────────────────────────────────────────────────────────┐
+│ 7. EVOLUTION (if anomaly detected)                       │
+│    Loop back to step 1 with AI-generated patch.          │
+└──────────────────────────────────────────────────────────┘
+
+8. Linux-First Design Principles
+Native Shared Libraries First: On Linux, drivers load as .so files via libloading — zero overhead, direct syscall access.
+No Windows-Specific Path Assumptions: All paths use std::path::Path, all file I/O uses async tokio or mio.
+Wayland-Native Debugging UI: The optional driver inspector GUI (if built) uses egui/iced targeting Wayland directly.
+First-Class WASM: WASM sandboxing works identically on Linux, macOS, and Windows — critical for community plugins.
+9. Integration with Domain Repos
+Domain Repo
+Driver Use Case
+tpt-nova-games
+Hot-swap AI behavior, community mods, self-balancing difficulty drivers
+tpt-nova-sim
+Self-correcting physics drivers, adaptive sensor fusion, anomaly repair
+tpt-nova-viz
+Runtime shader driver swaps, LOD strategy evolution, data-driven rendering
+The driver system is domain-agnostic. Each domain repo provides its own driver libraries and invariant suites.
+10. Progress Tracking (todo.md Structure)
+
+# tpt-nova-drivers Progress
+
+## [ ] Layer 1: Primitives & Core Traits
+- [ ] Define `Driver` trait and `DriverContext`.
+- [ ] Implement `DriverId`, `DriverVersion`, `CapabilitySet`.
+- [ ] Build `drivers-registry` with ArcSwap-based lookup.
+- [ ] Unit tests for atomic hot-swap.
+
+## [ ] Layer 2: Sandbox & Safety
+- [ ] Implement native driver loading via `libloading`.
+- [ ] Implement WASM sandbox via `wasmtime` (optional feature).
+- [ ] Define capability token system.
+- [ ] Fuzz test sandbox escape attempts.
+
+## [ ] Layer 3: Migration & Versioning
+- [ ] Implement `migrate_from` trait method.
+- [ ] Build migration chain composer (v1 → v2 → v3).
+- [ ] Implement shadow execution for A/B testing.
+- [ ] Build rollback mechanism.
+
+## [ ] Layer 4: AI & Self-Debugging
+- [ ] Integrate `tpt-anima` for anomaly observation.
+- [ ] Integrate `tpt-eve` for driver patch generation.
+- [ ] Integrate `tpt-telos` for symbolic verification.
+- [ ] Implement full self-debugging loop end-to-end.
+- [ ] Benchmark loop latency (target: < 1 frame for simple fixes).
+
+## [ ] Layer 5: Domain Integration
+- [ ] Ship example drivers for `tpt-nova-games`.
+- [ ] Ship example drivers for `tpt-nova-sim`.
+- [ ] Ship example drivers for `tpt-nova-viz`.
+- [ ] Document driver authoring guide.
+
+11. Success Criteria
+tpt-nova-drivers is successful when:
+A driver can be hot-swapped in < 1ms without frame drops.
+The self-debugging loop can detect and fix a physics anomaly (e.g., exploding joint) within 5 frames, fully automatically.
+A community-contributed WASM driver can be loaded without crashing the host simulation, even if the driver contains bugs.
+A schema migration across 3 driver versions preserves all verified invariants.
+The crate remains MIT-only (with wasmtime as an explicit opt-in exception).
