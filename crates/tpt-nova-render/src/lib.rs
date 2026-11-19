@@ -108,8 +108,16 @@ pub struct Renderer {
 }
 
 impl Renderer {
-    /// Initialize the renderer against an existing window.
+    /// Initialize the renderer against an existing window. Blocks on the GPU
+    /// setup, so it is not available on the web (use `Renderer::new_async`).
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn new(window: Arc<Window>) -> anyhow::Result<Self> {
+        pollster::block_on(Self::new_async(window))
+    }
+
+    /// Initialize the renderer without blocking. On the web the browser cannot
+    /// block, so this is the only constructor there.
+    pub async fn new_async(window: Arc<Window>) -> anyhow::Result<Self> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
 
         // SAFETY: the window is stored in the renderer, declared last so it drops
@@ -121,21 +129,24 @@ impl Renderer {
             })?
         };
 
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: Some(&surface),
-            force_fallback_adapter: false,
-            ..Default::default()
-        }))?;
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                compatible_surface: Some(&surface),
+                force_fallback_adapter: false,
+                ..Default::default()
+            })
+            .await?;
 
-        let (device, queue) =
-            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
                 label: Some("nova-device"),
                 required_features: wgpu::Features::empty(),
                 required_limits: wgpu::Limits::default(),
                 memory_hints: wgpu::MemoryHints::default(),
                 ..Default::default()
-            }))?;
+            })
+            .await?;
 
         let size = window.size();
         let config = wgpu::SurfaceConfiguration {

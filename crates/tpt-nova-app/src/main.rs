@@ -15,7 +15,11 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 
 use glam::{EulerRot, Vec2, Vec3};
 use serde::Deserialize;
@@ -1252,53 +1256,160 @@ impl App {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn main() -> anyhow::Result<()> {
     env_logger::init();
-    let seed: u64 = std::env::var("NOVA_SEED")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0x1234_ABCD);
+    let seed = read_seed();
     log::info!("TPT Nova starting (seed=0x{seed:016X})");
 
-    let mut event_loop = tpt_window::new_event_loop()?;
-    let window = Arc::new(
+    // Native: the caller owns the loop and blocks up to 16 ms for events, so an
+    // idle editor does not redraw. The browser cannot block (see `web_start`).
+    let event_loop = tpt_window::new_event_loop()?;
+    let window = open_window(&event_loop)?;
+    let renderer = Renderer::new(Arc::clone(&window))?;
+    let mut rt = new_runtime(event_loop, window, renderer, seed, false);
+    while rt.tick(Duration::from_millis(16)) {}
+    Ok(())
+}
+
+// The browser starts the app through `web_start`; this stub only satisfies the bin.
+#[cfg(target_arch = "wasm32")]
+fn main() {}
+
+fn read_seed() -> u64 {
+    std::env::var("NOVA_SEED")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0x1234_ABCD)
+}
+
+fn open_window(event_loop: &tpt_window::EventLoop) -> anyhow::Result<Arc<Window>> {
+    Ok(Arc::new(
         WindowBuilder::new()
             .with_title("TPT Nova — Editor")
             .with_inner_size(LogicalSize::new(1280.0, 720.0))
-            .build(&event_loop)?,
-    );
-    let renderer = Renderer::new(Arc::clone(&window))?;
-    let size = window.size();
+            .build(event_loop)?,
+    ))
+}
 
-    let mut app = App::new(seed);
-    app.viewport_size = (size.width.max(1), size.height.max(1));
-    app.window = Some(Arc::clone(&window));
-    app.renderer = Some(renderer);
-    app.last_time = Instant::now();
-    log::info!("TPT Nova ready; window + renderer ready");
+/// One editor instance: the event loop, its queue and the app state.
+struct Runtime {
+    event_loop: tpt_window::EventLoop,
+    queue: EventQueue,
+    app: App,
+    /// Render on every tick. The web build has no event-driven wake-up to
+    /// render on, so it renders each animation frame; native renders only after
+    /// events.
+    render_every_tick: bool,
+}
 
-    // The app owns the loop. Wake at most every 16 ms, and render only when the
-    // batch held real events, so an idle editor does not redraw.
-    let mut queue = EventQueue::with_capacity(DEFAULT_CAPACITY);
-    loop {
-        let status = event_loop.step(&mut EventSink::new(&mut queue), Duration::from_millis(16));
-        let mut redraw = false;
+impl Runtime {
+    /// One pass of the loop: pump window events, then render if needed. `wait`
+    /// bounds how long the call may block for events (zero on the web). Returns
+    /// `false` once the app asked to exit.
+    fn tick(&mut self, wait: Duration) -> bool {
+        let status = self
+            .event_loop
+            .step(&mut EventSink::new(&mut self.queue), wait);
+        let mut redraw = self.render_every_tick;
         let mut exit = false;
-        for ev in queue.drain() {
+        for ev in self.queue.drain() {
             if matches!(ev.event, WindowEvent::YieldPoint { .. }) {
                 continue;
             }
             redraw = true;
-            exit |= app.handle_window_event(ev.event);
+            exit |= self.app.handle_window_event(ev.event);
         }
         if exit || status == PollStatus::Exit {
-            break;
+            return false;
         }
         if redraw {
-            app.render_frame();
+            self.app.render_frame();
         }
+        true
     }
+}
+
+/// Wires a window and renderer into a new app.
+fn new_runtime(
+    event_loop: tpt_window::EventLoop,
+    window: Arc<Window>,
+    renderer: Renderer,
+    seed: u64,
+    render_every_tick: bool,
+) -> Runtime {
+    let size = window.size();
+    let mut app = App::new(seed);
+    app.viewport_size = (size.width.max(1), size.height.max(1));
+    app.window = Some(window);
+    app.renderer = Some(renderer);
+    app.last_time = Instant::now();
+    log::info!("TPT Nova ready; window + renderer ready");
+    Runtime {
+        event_loop,
+        queue: EventQueue::with_capacity(DEFAULT_CAPACITY),
+        app,
+        render_every_tick,
+    }
+}
+
+/// Browser entry point, run once when the module loads. Setup is asynchronous
+/// because the browser cannot block on the GPU; the frame loop then starts from
+/// [`drive_with_animation_frames`].
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen(start)]
+pub fn web_start() {
+    // Without this a Rust panic on wasm is only an opaque "unreachable" trap.
+    std::panic::set_hook(Box::new(|info| {
+        web_sys::console::error_1(&wasm_bindgen::JsValue::from_str(&info.to_string()));
+    }));
+    wasm_bindgen_futures::spawn_local(async {
+        if let Err(err) = web_boot().await {
+            web_sys::console::error_1(&wasm_bindgen::JsValue::from_str(&format!("{err:#}")));
+        }
+    });
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn web_boot() -> anyhow::Result<()> {
+    let event_loop = tpt_window::new_event_loop()?;
+    let window = open_window(&event_loop)?;
+    let renderer = Renderer::new_async(Arc::clone(&window)).await?;
+    let rt = new_runtime(event_loop, window, renderer, read_seed(), true);
+    drive_with_animation_frames(rt);
     Ok(())
+}
+
+/// Calls `tick` once per animation frame. Returning from the callback is what
+/// lets the browser run, so this never blocks.
+#[cfg(target_arch = "wasm32")]
+fn drive_with_animation_frames(mut rt: Runtime) {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use wasm_bindgen::closure::Closure;
+
+    let slot: Rc<RefCell<Option<Closure<dyn FnMut()>>>> = Rc::new(RefCell::new(None));
+    let next = Rc::clone(&slot);
+    let frame = Closure::<dyn FnMut()>::new(move || {
+        // On exit we stop scheduling. The closure is not dropped from inside its
+        // own call, which wasm-bindgen does not allow.
+        if rt.tick(Duration::ZERO) {
+            if let Some(cb) = next.borrow().as_ref() {
+                request_animation_frame(cb);
+            }
+        }
+    });
+    request_animation_frame(&frame);
+    *slot.borrow_mut() = Some(frame);
+}
+
+#[cfg(target_arch = "wasm32")]
+fn request_animation_frame(cb: &wasm_bindgen::closure::Closure<dyn FnMut()>) {
+    use wasm_bindgen::JsCast;
+    web_sys::window()
+        .expect("no global window")
+        .request_animation_frame(cb.as_ref().unchecked_ref())
+        .expect("requestAnimationFrame failed");
 }
 
 #[cfg(test)]

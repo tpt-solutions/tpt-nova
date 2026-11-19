@@ -3278,6 +3278,10 @@ dependencies = [
  "tpt-nova-telemetry",
  "tpt-nova-ui",
  "tpt-window",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "web-time",
 ]
 
 [[package]]
@@ -3519,6 +3523,7 @@ name = "tpt-window-core"
 version = "0.1.0"
 dependencies = [
  "raw-window-handle",
+ "web-time",
 ]
 
 [[package]]
