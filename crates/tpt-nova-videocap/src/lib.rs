@@ -12,12 +12,11 @@
 //! The pure geometry here is fully testable offline: feed synthetic depth/mask
 //! arrays and assert the generated proxies and colliders.
 
-use parry3d::math::Vector;
-use parry3d::transformation::try_convex_hull;
 use serde::{Deserialize, Serialize};
 use tpt_nova_ecs::transform::Transform;
 use tpt_nova_ecs::{Entity, Mat4, Vec3, World};
 use tpt_nova_ingest::decompose::ConvexPart;
+use tpt_nova_ingest::hull::convex_hull;
 use tpt_nova_ingest::Collider3D;
 
 /// Pinhole camera intrinsics (pixels).
@@ -165,14 +164,9 @@ pub fn unproject(u: f32, v: f32, depth: f32, intr: &CameraIntrinsics, pose: Mat4
 /// 3D, otherwise an AABB box (eight corners) so every proxy still collides.
 fn collider_from_points(points: &[[f32; 3]]) -> Collider3D {
     if points.len() >= 4 {
-        let vecs: Vec<Vector> = points
-            .iter()
-            .map(|p| Vector::new(p[0], p[1], p[2]))
-            .collect();
-        if let Ok((hull, indices)) = try_convex_hull(&vecs) {
-            if hull.len() >= 4 && !indices.is_empty() {
-                let vertices: Vec<[f32; 3]> = hull.iter().map(|p| [p.x, p.y, p.z]).collect();
-                return Collider3D::from_parts(vec![ConvexPart { vertices, indices }]);
+        if let Some(part) = convex_hull(points) {
+            if part.vertices.len() >= 4 && !part.indices.is_empty() {
+                return Collider3D::from_parts(vec![part]);
             }
         }
     }

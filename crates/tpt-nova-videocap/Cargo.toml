@@ -15,4 +15,3 @@ tpt-nova-ingest = { workspace = true }
 glam = { version = "0.29", features = ["std"] }
 serde = { version = "1", features = ["derive"] }
 thiserror = "1"
-parry3d = "0.29"
