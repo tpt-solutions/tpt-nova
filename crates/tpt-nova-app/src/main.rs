@@ -1,6 +1,6 @@
 //! TPT Nova application shell.
 //!
-//! Boots a winit window, builds the ECS world (a cube + camera), and runs a
+//! Boots a tpt-window window, builds the ECS world (a cube + camera), and runs a
 //! deterministic fixed-timestep loop. Input is mapped to actions; an external
 //! AI agent can hot-apply changes by writing `nova-control.json`, which the
 //! engine polls each tick. Telemetry is dumped to `nova-telemetry.json` on an
@@ -32,11 +32,10 @@ use tpt_nova_overlay::{project_to_screen, SelectionTool};
 use tpt_nova_render::Renderer;
 use tpt_nova_telemetry::{FileSink, TelemetryEmitter};
 use tpt_nova_ui::{Color, DrawCommand, DrawList, Rect, Ui, UiInput};
-use winit::application::ApplicationHandler;
-use winit::event::{ElementState, WindowEvent as WinitWindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::keyboard::{Key, ModifiersState, NamedKey};
-use winit::window::{Window, WindowAttributes};
+use tpt_window::{
+    ElementState, EventQueue, EventSink, KeyCode, LogicalSize, PollStatus, Window, WindowBuilder,
+    WindowEvent, DEFAULT_CAPACITY,
+};
 
 const FIXED_DT: f32 = 1.0 / 60.0;
 const TELEMETRY_INTERVAL: u64 = 30; // emit every 30 ticks (~0.5s)
@@ -160,8 +159,6 @@ struct App {
     pointer_pressed: bool,
     /// Window size in pixels, kept in sync with `Resized`.
     viewport_size: (u32, u32),
-    /// Current keyboard modifier state (tracked via `ModifiersChanged`).
-    modifiers: ModifiersState,
     /// Active gizmo drag: (start pointer, entity, transform at drag start). The
     /// pre-drag transform is kept so the drag can be recorded into the undo
     /// history on release.
@@ -278,7 +275,6 @@ impl App {
             pointer_down: false,
             pointer_pressed: false,
             viewport_size: (1280, 720),
-            modifiers: ModifiersState::empty(),
             gizmo_drag: None,
             last_fix: None,
             camera_distance: 3.5,
@@ -549,7 +545,7 @@ impl App {
             pointer: self.pointer,
             pointer_down: self.pointer_down,
             pointer_pressed: self.pointer_pressed,
-            shift_held: self.modifiers.shift_key(),
+            shift_held: self.shift_held(),
             text_entered: self
                 .world
                 .resource::<InputState>()
@@ -569,12 +565,13 @@ impl App {
         draw.extend(self.build_toolbar(layout.toolbar, input.clone()));
 
         // ---- Hierarchy / inspector / asset panels (self-handling) ---------
+        let shift_held = self.shift_held();
         draw.extend(hierarchy_panel(
             &self.world,
             &mut self.editor,
             input.clone(),
             layout.hierarchy,
-            self.modifiers.shift_key(),
+            shift_held,
         ));
         draw.extend(inspector_panel(
             &mut self.world,
@@ -910,7 +907,7 @@ impl App {
 
         // Shift-click in the viewport toggles the entity into the multi-selection
         // instead of replacing it (mirrors the hierarchy panel behavior).
-        let shift = self.modifiers.shift_key();
+        let shift = self.shift_held();
 
         match self.tool {
             ViewportTool::Gizmo => {
@@ -1005,35 +1002,44 @@ impl App {
         }
     }
 
-    fn handle_key(&mut self, key: &Key, pressed: bool) {
-        if !pressed {
-            return;
-        }
+    /// Whether either Shift key is held, read from the input resource.
+    fn shift_held(&self) -> bool {
+        self.world.resource::<InputState>().is_some_and(|i| {
+            i.is_key_down(KeyCode::ShiftLeft) || i.is_key_down(KeyCode::ShiftRight)
+        })
+    }
+
+    /// Whether either Control key is held, read from the input resource.
+    fn ctrl_held(&self) -> bool {
+        self.world.resource::<InputState>().is_some_and(|i| {
+            i.is_key_down(KeyCode::ControlLeft) || i.is_key_down(KeyCode::ControlRight)
+        })
+    }
+
+    /// Handles a key press (the caller filters out releases).
+    fn handle_key(&mut self, code: KeyCode) {
         // While the Highlight & Fix instruction field has focus, keystrokes edit
         // that string instead of driving editor shortcuts. Typed characters
         // arrive via `InputState.text_entered` (fed in `build_editor_ui`); here
         // we only handle the control keys (backspace to delete, Escape to
         // unfocus).
         if self.editor.text_focus.as_deref() == Some("fix_instruction") {
-            match key {
-                Key::Named(NamedKey::Backspace) => {
+            match code {
+                KeyCode::Backspace => {
                     self.fix_instruction.pop();
                 }
-                Key::Named(NamedKey::Escape) => {
+                KeyCode::Escape => {
                     self.editor.text_focus = None;
                 }
                 _ => {}
             }
             return;
         }
-        let ctrl = self.modifiers.control_key();
-        let shift = self.modifiers.shift_key();
-        let ch = match key {
-            Key::Character(c) => Some(c.to_string()),
-            _ => None,
-        };
+        let ctrl = self.ctrl_held();
+        let shift = self.shift_held();
+        let ch = shortcut_name(code);
         if ctrl {
-            match ch.as_deref() {
+            match ch {
                 Some("z") if shift => {
                     self.editor.history.redo(&mut self.world);
                 }
@@ -1047,7 +1053,11 @@ impl App {
             }
             return;
         }
-        match ch.as_deref() {
+        if shift {
+            // Shortcuts are lowercase letters; Shift changes the character, so skip them.
+            return;
+        }
+        match ch {
             Some("e") => self.editor_enabled = !self.editor_enabled,
             Some("g") => {
                 self.gizmo_mode = match self.gizmo_mode {
@@ -1067,6 +1077,42 @@ impl App {
             _ => {}
         }
     }
+}
+
+/// Name of a key for editor shortcuts. tpt-window reports physical keys, so
+/// shortcuts follow QWERTY letter positions.
+fn shortcut_name(code: KeyCode) -> Option<&'static str> {
+    use KeyCode::*;
+    Some(match code {
+        A => "a",
+        B => "b",
+        C => "c",
+        D => "d",
+        E => "e",
+        F => "f",
+        G => "g",
+        H => "h",
+        I => "i",
+        J => "j",
+        K => "k",
+        L => "l",
+        M => "m",
+        N => "n",
+        O => "o",
+        P => "p",
+        Q => "q",
+        R => "r",
+        S => "s",
+        T => "t",
+        U => "u",
+        V => "v",
+        W => "w",
+        X => "x",
+        Y => "y",
+        Z => "z",
+        Escape => "Escape",
+        _ => return None,
+    })
 }
 
 /// Given the current accumulator and the elapsed real time, return the number
@@ -1154,67 +1200,34 @@ fn apply_control(world: &mut World, cube: Entity, last_mtime: &mut Option<u64>, 
     }
 }
 
-impl ApplicationHandler for App {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.window.is_some() {
-            return;
-        }
-        let attrs = WindowAttributes::default()
-            .with_title("TPT Nova — Editor")
-            .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 720.0));
-        let window = Arc::new(event_loop.create_window(attrs).expect("create window"));
-
-        let renderer = Renderer::new(Arc::clone(&window)).expect("init renderer");
-        self.viewport_size = (
-            window.inner_size().width.max(1),
-            window.inner_size().height.max(1),
-        );
-        self.window = Some(Arc::clone(&window));
-        self.renderer = Some(renderer);
-        self.last_time = Instant::now();
-        log::info!("TPT Nova resumed; window + renderer ready");
-    }
-
-    fn window_event(
-        &mut self,
-        event_loop: &ActiveEventLoop,
-        _id: winit::window::WindowId,
-        event: WinitWindowEvent,
-    ) {
+impl App {
+    /// Applies one window event. Returns `true` when the app should exit.
+    fn handle_window_event(&mut self, event: WindowEvent) -> bool {
         match event {
-            WinitWindowEvent::CloseRequested => {
-                event_loop.exit();
-            }
-            WinitWindowEvent::Resized(size) => {
+            WindowEvent::CloseRequested => return true,
+            WindowEvent::Resized(size) => {
                 if let Some(renderer) = self.renderer.as_mut() {
                     renderer.resize(size.width.max(1), size.height.max(1));
                 }
                 self.viewport_size = (size.width.max(1), size.height.max(1));
             }
-            WinitWindowEvent::RedrawRequested => {
-                self.render_frame();
-            }
-            WinitWindowEvent::KeyboardInput {
-                event: ref key_event,
-                ..
+            WindowEvent::KeyboardInput {
+                state, key_code, ..
             } => {
                 if let Some(input) = self.world.resource_mut::<InputState>() {
                     input.apply_event(&event);
                 }
-                if key_event.state == ElementState::Pressed {
-                    self.handle_key(&key_event.logical_key, true);
+                if state == ElementState::Pressed {
+                    self.handle_key(key_code);
                 }
             }
-            WinitWindowEvent::ModifiersChanged(mods) => {
-                self.modifiers = mods.state();
-            }
-            WinitWindowEvent::CursorMoved { position, .. } => {
+            WindowEvent::CursorMoved { position, .. } => {
                 self.pointer = Vec2::new(position.x as f32, position.y as f32);
                 if let Some(input) = self.world.resource_mut::<InputState>() {
                     input.apply_event(&event);
                 }
             }
-            WinitWindowEvent::MouseInput { state, .. } => {
+            WindowEvent::MouseInput { state, .. } => {
                 let down = state == ElementState::Pressed;
                 if down {
                     self.pointer_pressed = true;
@@ -1228,20 +1241,14 @@ impl ApplicationHandler for App {
                     input.apply_event(&event);
                 }
             }
-            WinitWindowEvent::MouseWheel { .. } => {
+            WindowEvent::MouseWheel { .. } | WindowEvent::Ime(_) => {
                 if let Some(input) = self.world.resource_mut::<InputState>() {
                     input.apply_event(&event);
                 }
             }
             _ => {}
         }
-    }
-
-    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        if let Some(window) = &self.window {
-            window.request_redraw();
-        }
-        event_loop.set_control_flow(ControlFlow::Wait);
+        false
     }
 }
 
@@ -1253,10 +1260,44 @@ fn main() -> anyhow::Result<()> {
         .unwrap_or(0x1234_ABCD);
     log::info!("TPT Nova starting (seed=0x{seed:016X})");
 
-    let event_loop = EventLoop::new()?;
-    event_loop.set_control_flow(ControlFlow::Wait);
+    let mut event_loop = tpt_window::new_event_loop()?;
+    let window = Arc::new(
+        WindowBuilder::new()
+            .with_title("TPT Nova — Editor")
+            .with_inner_size(LogicalSize::new(1280.0, 720.0))
+            .build(&event_loop)?,
+    );
+    let renderer = Renderer::new(Arc::clone(&window))?;
+    let size = window.size();
+
     let mut app = App::new(seed);
-    event_loop.run_app(&mut app)?;
+    app.viewport_size = (size.width.max(1), size.height.max(1));
+    app.window = Some(Arc::clone(&window));
+    app.renderer = Some(renderer);
+    app.last_time = Instant::now();
+    log::info!("TPT Nova ready; window + renderer ready");
+
+    // The app owns the loop. Wake at most every 16 ms, and render only when the
+    // batch held real events, so an idle editor does not redraw.
+    let mut queue = EventQueue::with_capacity(DEFAULT_CAPACITY);
+    loop {
+        let status = event_loop.step(&mut EventSink::new(&mut queue), Duration::from_millis(16));
+        let mut redraw = false;
+        let mut exit = false;
+        for ev in queue.drain() {
+            if matches!(ev.event, WindowEvent::YieldPoint { .. }) {
+                continue;
+            }
+            redraw = true;
+            exit |= app.handle_window_event(ev.event);
+        }
+        if exit || status == PollStatus::Exit {
+            break;
+        }
+        if redraw {
+            app.render_frame();
+        }
+    }
     Ok(())
 }
 
@@ -1339,7 +1380,7 @@ mod tests {
             .resource_mut::<InputState>()
             .unwrap()
             .keys
-            .insert(tpt_nova_input::KeyCode::KeyA);
+            .insert(tpt_nova_input::KeyCode::A);
 
         let before = world.get_component::<Transform>(cube).unwrap().rotation;
         movement_system(&mut world, cube);
@@ -1522,23 +1563,21 @@ mod tests {
     #[test]
     fn toggle_keys_change_editor_state() {
         let mut app = App::new(0x5A);
-        let key = |s: &str| Key::Character(s.into());
-        let pressed = true;
 
         let before = app.editor_enabled;
-        app.handle_key(&key("e"), pressed);
+        app.handle_key(KeyCode::E);
         assert_ne!(app.editor_enabled, before);
 
         let m0 = app.gizmo_mode;
-        app.handle_key(&key("g"), pressed);
+        app.handle_key(KeyCode::G);
         assert_ne!(app.gizmo_mode, m0);
 
         let t0 = app.tool;
-        app.handle_key(&key("h"), pressed);
+        app.handle_key(KeyCode::H);
         assert_ne!(app.tool, t0);
 
         let p0 = app.editor.playing;
-        app.handle_key(&key("p"), pressed);
+        app.handle_key(KeyCode::P);
         assert_ne!(app.editor.playing, p0);
     }
 

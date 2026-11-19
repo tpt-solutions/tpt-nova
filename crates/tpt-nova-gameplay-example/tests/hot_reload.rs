@@ -79,7 +79,7 @@ fn stage_temp_copy(original: &PathBuf) -> Option<PathBuf> {
 fn world_pressing_right() -> (World, tpt_nova_ecs::Entity) {
     let mut world = World::new();
     let mut input = InputState::default();
-    input.keys.insert(KeyCode::KeyD);
+    input.keys.insert(KeyCode::D);
     world.add_resource(input);
     world.add_resource(default_action_map());
     let player = world.spawn();

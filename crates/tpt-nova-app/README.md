@@ -1,8 +1,8 @@
 # tpt-nova-app
 
-> TPT Nova runtime application shell (winit + wgpu + ECS)
+> TPT Nova runtime application shell (tpt-window + wgpu + ECS)
 
-The runtime application shell: a winit window, wgpu rendering, a fixed-timestep loop, the live editor UI, and telemetry/control-file hot-apply.
+The runtime application shell: a tpt-window window, wgpu rendering, a fixed-timestep loop, the live editor UI, and telemetry/control-file hot-apply.
 
 Part of [TPT Nova](../../README.md), the AI-native, ECS-based real-time engine.
 
