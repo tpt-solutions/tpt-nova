@@ -1,0 +1,111 @@
+Design Spec: High-Level 3D Scene Graph & Appfront Integration for tpt-nova
+Status: Draft
+Target Repository: tpt-solutions/tpt-nova
+License: MIT OR Apache-2.0
+Maintainer: TPT Solutions
+1. Summary & Motivation
+tpt-nova already possesses a powerful, low-level wgpu renderer (tpt-nova-render) and a robust ECS (tpt-nova-ecs). However, bridging the gap between raw wgpu pipelines and developer-friendly, "stunning" 3D experiences requires a higher-level abstraction.
+This spec proposes a new crate, tpt-nova-scene-graph, which acts as the "Three.js-like" layer of the ecosystem. It provides a declarative, easy-to-use API for cameras, lights, meshes, and post-processing, while implementing the SceneDelegate trait to seamlessly embed these scenes into tpt-appfront 2D layouts.
+2. Goals
+Provide a high-level, declarative 3D API that abstracts away raw wgpu complexity.
+Deliver "stunning defaults": out-of-the-box post-processing (bloom, tone mapping, ambient occlusion) and sensible PBR material defaults.
+Implement the SceneDelegate trait from tpt-appfront-canvas-3d, enabling 3D viewports inside 2D UIs.
+Maintain strict modularity: tpt-nova does not require tpt-appfront, but cleanly integrates with it via an opt-in feature flag.
+Ensure Wasm/WebGPU compatibility to support the tpt-pwa offline-first deployment model.
+3. Non-Goals
+Rewriting or replacing the low-level tpt-nova-render crate.
+Building a full, monolithic game engine (physics, audio, and animation remain in their respective tpt-nova-* crates).
+Adding heavy, non-MIT/Apache-2.0 dependencies (e.g., no external Z3, no heavy proprietary asset loaders).
+Forcing a specific asset pipeline (glTF is supported, but the graph is format-agnostic).
+4. Proposed Architecture
+4.1. New Crate: tpt-nova-scene-graph
+Role: The high-level, declarative 3D abstraction layer.
+Dependencies: tpt-nova-render, tpt-nova-ecs, tpt-appfront-canvas-3d (optional, gated behind the appfront feature flag), glam (or existing math lib).
+Key Components:
+Scene: The root container managing the transform hierarchy, active camera, and global environment settings (e.g., ambient light, background color/skybox).
+Node: A hierarchical transform node (position, rotation, scale) that can hold components like Mesh, Light, or Camera.
+* PostProcessPipeline: A modular, toggleable stack of full-screen effects (Tone Mapping, Bloom, FXAA/TAA, Ambient Occlusion) that plug directly into tpt-nova-render's existing pass system.
+* AppfrontSceneDelegate (Feature-gated): The implementation of tpt_appfront_canvas_3d::SceneDelegate. It receives pointer events, resize events, and frame ticks from the tpt-appfront host and routes them to the Scene.
+4.2. Enhancements to Existing Crates
+tpt-nova-render: Expose a clean, stable API for registering custom full-screen post-processing passes, allowing tpt-nova-scene-graph to orchestrate them without owning the low-level wgpu state.
+5. API Design & Usage Example
+The API is designed to be declarative and intuitive, mirroring the ease of use of high-level web 3D libraries, while remaining strictly typed in Rust.
+use tpt_nova_scene_graph::prelude::*;
+use tpt_nova_render::wgpu::Device; // Existing low-level types
+
+// 1. Initialize the scene
+let mut scene = Scene::new();
+
+// 2. Add a camera
+let camera_id = scene.add_node(Node::camera(PerspectiveCamera::new(60.0, 16.0/9.0, 0.1, 100.0)));
+scene.set_active_camera(camera_id);
+
+// 3. Add lighting
+scene.add_node(Node::light(DirectionalLight {
+    color: Color::WHITE,
+    intensity: 1.5,
+    direction: Vec3::new(-1.0, -1.0, -1.0).normalize(),
+}));
+scene.add_node(Node::light(AmbientLight { color: Color::hex("#404050"), intensity: 0.4 }));
+
+// 4. Add a mesh (e.g., loaded via tpt-nova-ingest)
+let mesh_id = scene.add_node(Node::mesh(Mesh::from_gltf("assets/model.glft")));
+scene.get_node_mut(mesh_id).unwrap().transform.rotation.y = 0.5; // Rotate slightly
+
+// 5. Enable "stunning defaults" post-processing
+scene.enable_post_process(PostProcessEffect::Bloom { threshold: 0.8, intensity: 0.6 });
+scene.enable_post_process(PostProcessEffect::ToneMapping(ToneMapping::Aces));
+
+// 6. (Optional) Bridge to tpt-appfront
+#[cfg(feature = "appfront")]
+{
+    use tpt_appfront_canvas_3d::SceneDelegate;
+    
+    let delegate = AppfrontSceneDelegate::new(scene);
+    
+    // This `delegate` is now passed to the `tpt-appfront` Viewport3DNode
+    // It will automatically handle:
+    // - delegate.on_resize(width, height)
+    // - delegate.on_pointer_down(x, y)
+    // - delegate.render_frame(&wgpu_context)
+}
+
+6. Implementation Phases
+Phase 1: Core Graph & Rendering (Weeks 1-4)
+Define Scene, Node, and transform hierarchy.
+Implement Camera and Light node types.
+Wire Scene to drive tpt-nova-render's existing PBR and sprite pipelines.
+Create a standalone CLI/GUI example (using tpt-nova-editor or a simple window) to prove the graph renders correctly.
+Phase 2: "Stunning Defaults" & Post-Processing (Weeks 5-8)
+Implement the PostProcessPipeline orchestrator.
+Add Bloom, Tone Mapping, and basic Anti-Aliasing passes to tpt-nova-render (if not already present) and expose them to the scene graph.
+Tune default values to ensure out-of-the-box visuals look premium and modern.
+Phase 3: The Appfront Bridge (Weeks 9-10)
+Add the appfront feature flag to tpt-nova-scene-graph.
+Implement the SceneDelegate trait (AppfrontSceneDelegate).
+Handle pointer event raycasting (mapping 2D screen coordinates from tpt-appfront to 3D world coordinates).
+Test embedding the scene inside a tpt-appfront UI running in tpt-shell and as a Wasm PWA.
+Phase 4: Polish & Ecosystem Synergy (Weeks 11-12)
+Ensure Wasm/WebGPU compatibility for PWA deployments.
+Document the "How to embed 3D in your Rust UI" guide.
+Verify cargo-deny compliance for all new dependencies.
+7. Integration with Existing Ecosystem
+Component
+Integration Point
+tpt-nova-render
+tpt-nova-scene-graph is a consumer of tpt-nova-render. It does not duplicate wgpu logic; it orchestrates it.
+tpt-nova-ecs
+The scene graph can optionally be backed by the ECS for large-scale scenes, but defaults to a simple in-memory graph for ease of use.
+tpt-appfront
+Connected via the SceneDelegate trait. tpt-nova depends on tpt-appfront-canvas-3d only when the appfront feature is enabled, keeping the core engine clean.
+tpt-pwa / tpt-cortex
+The scene graph compiles to Wasm. A PWA can use tpt-appfront + tpt-nova-scene-graph to render interactive 3D dashboards entirely in the browser, with tpt-cortex handling background data syncing.
+tpt-shell
+Provides the native wgpu surface. The AppfrontSceneDelegate receives this surface from the host and passes it to tpt-nova-render.
+8. Open Questions
+Raycasting for Pointer Events: Should tpt-nova-scene-graph include a basic bounding-box raycaster for the SceneDelegate, or should that be delegated to tpt-nova-physics? (Recommendation: Include a lightweight, optional AABB raycaster in the scene graph for basic UI interaction (e.g., "click this 3D button"), but rely on tpt-nova-physics for complex collision queries).
+Animation: Skeletal animation is already handled by tpt-nova-anim. Should the scene graph have a high-level Animator component that wraps tpt-nova-anim, or should users drive it manually? (Recommendation: Provide a simple Animator wrapper in Phase 4 to keep the "Three.js-like" ease of use, but keep the heavy lifting in tpt-nova-anim).
+This spec completes the picture. It gives tpt-nova the high-level, visually stunning abstraction it needs, while cleanly plugging into the tpt-appfront modular ecosystem you are building.
+You now have two locked-in, highly detailed, and strictly bounded design specs:
+tpt-appfront: Modular UI, extensible themes, and the SceneDelegate contract.
+tpt-nova: High-level 3D scene graph, stunning defaults, and the SceneDelegate implementation.
