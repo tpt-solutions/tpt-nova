@@ -16,6 +16,29 @@ semantic versioning once it leaves Alpha.
   `LICENSE-APACHE`).
 - **Crate metadata:** each crate has its own `README.md`, `CHANGELOG.md`,
   `keywords`, and `categories`.
+- **Dependencies (license policy):** removed the Apache-2.0-only `rapier2d`,
+  `rapier3d`, and `parry3d`, and the MPL-2.0 `symphonia` decoder stack.
+  - `tpt-nova-physics` now uses an in-house 2D solver (circles, convex polygons,
+    capsules approximated as stadiums; sequential impulses).
+  - `tpt-nova-ingest` now uses an in-house 3D solver for convex-hull compounds
+    (`solver3d`), an in-house quickhull (`hull`), and an in-house approximate
+    convex decomposition. Decomposition is top-down: the most concave part is
+    split by the cut with the smallest total child hull volume. Part boundaries
+    differ from V-HACD, and the 3D solver has no sleeping or continuous collision,
+    so fast small bodies can tunnel.
+  - `tpt-nova-audio` decodes WAV in-house (rodio's WAV path needs `hound`,
+    Apache-only), Ogg Vorbis via `lewton`, and MP3 via `minimp3`.
+    FLAC is decoded by `tpt-av-cadence-flac` from the tpt-cadence suite (MIT OR Apache-2.0),
+    pinned to a commit in `Cargo.toml`. rodio's own FLAC path needs `claxon`, so it is not used.
+  - `tpt-nova-ingest::decompose_convex` takes `DecompositionParams` (was
+    `VHACDParameters`). `tpt-nova-audio::Sound::decode` returns `Decoded`.
+  - Still Apache-2.0-only via the platform stack, listed as exceptions in
+    `deny.toml`: `winit`, `cpal`, and the wgpu/naga helpers. `smartstring` (MPL-2.0,
+    via `rhai`) is also an exception.
+- **`deny.toml`** at the workspace root enforces the license allow-list
+  (MIT, BSD, ISC, Zlib, 0BSD, Unicode, CC0, Unlicense). Apache-2.0 is not
+  allowed on its own, so Apache-only crates fail unless they have an exception.
+  Dual-licensed `MIT OR Apache-2.0` crates pass.
 
 ### Added — Phase 4: Generative Bridges (continued)
 - **`tpt-nova-splat`** (new crate): Gaussian Splat (3DGS) loading and collision-proxy

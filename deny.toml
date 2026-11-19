@@ -1,0 +1,85 @@
+# cargo-deny policy for TPT Nova.
+#
+# Run with:  cargo deny check
+#
+# License policy (spec §6, tightened):
+#   * Only permissive licenses that do not impose attribution-file duties are
+#     allowed on their own: MIT, BSD, ISC, Zlib, 0BSD, Unicode, CC0, Unlicense.
+#   * Apache-2.0 is NOT in the allow-list. A dependency licensed "MIT OR
+#     Apache-2.0" is still accepted (cargo-deny satisfies an OR expression with
+#     any allowed option), so dual-licensed crates pass. A dependency that is
+#     Apache-2.0 *only* (no MIT option) fails the check unless it appears in
+#     `[[licenses.exceptions]]` below.
+#   * Copyleft (GPL, LGPL, AGPL, MPL, SSPL, BSL, EUPL) is rejected by omission.
+#
+# Entries in `[[licenses.exceptions]]` are the Apache-2.0-only crates that are
+# still required by the windowing/audio/render stack and have no permissive
+# alternative in this codebase. Each is a known, reviewed debt item; remove an
+# entry as soon as its crate is replaced.
+
+[graph]
+targets = []
+all-features = false
+no-default-features = false
+
+[output]
+feature-depth = 1
+
+[advisories]
+version = 2
+yanked = "warn"
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+allow = [
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "0BSD",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "CC0-1.0",
+    "Unlicense",
+]
+
+# Apache-2.0-only (or MPL) crates still required by the platform stack. Keep
+# this list short; every entry is a policy exception that needs a replacement
+# or a waiver. Grouped by the crate that pulls them in.
+exceptions = [
+    # Windowing: winit and its transitive deps (Linux decorations, DPI types).
+    { allow = ["Apache-2.0"], crate = "winit" },
+    { allow = ["Apache-2.0", "MIT"], crate = "dpi" },
+    { allow = ["Apache-2.0"], crate = "ab_glyph" },
+    { allow = ["Apache-2.0"], crate = "ab_glyph_rasterizer" },
+    { allow = ["Apache-2.0"], crate = "owned_ttf_parser" },
+    { allow = ["Apache-2.0"], crate = "gethostname" },
+    # GPU stack: wgpu's shader compiler and GL loader.
+    { allow = ["Apache-2.0"], crate = "codespan-reporting" },
+    { allow = ["Apache-2.0"], crate = "spirv" },
+    { allow = ["Apache-2.0"], crate = "gl_generator" },
+    { allow = ["Apache-2.0"], crate = "glutin_wgl_sys" },
+    { allow = ["Apache-2.0"], crate = "khronos_api" },
+    # Audio output backend used by rodio.
+    { allow = ["Apache-2.0"], crate = "cpal" },
+    # Scripting: rhai's string-optimisation dependency (MPL-2.0 or later).
+    { allow = ["MPL-2.0"], crate = "smartstring" },
+]
+
+[licenses.private]
+ignore = false
+
+[bans]
+multiple-versions = "warn"
+wildcards = "allow"
+highlight = "all"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# tpt-cadence (MIT OR Apache-2.0) supplies the FLAC decoder, pinned by commit in
+# crates/tpt-nova-audio/Cargo.toml.
+allow-git = ["https://github.com/tpt-solutions/tpt-cadence"]

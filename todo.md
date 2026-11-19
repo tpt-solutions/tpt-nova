@@ -459,34 +459,34 @@ do not create the crate until Layer 1 is being implemented (CLAUDE.md: no specul
 Current gaps: the renderer draws isotropic billboards (rotation/anisotropic scale unused, no Gaussian falloff), has no depth sorting, keeps only SH-DC color, and the collider is a single convex hull. Each sub-phase is independently shippable; keep the `render` feature optional so headless CI stays green.
 
 ### A: Rendering quality
-- [ ] `Splat::covariance3d()` CPU helper (R S Sᵀ Rᵀ) with unit tests (axis-aligned + rotated)
-- [ ] Anisotropic splat shader: project 3D covariance to a 2D screen-space ellipse via the perspective Jacobian (+ low-pass), oriented quad, Gaussian alpha falloff in the fragment stage
-- [ ] Move per-splat data to a storage buffer; vertex shader reads via a sorted index buffer
-- [ ] Depth sorting: CPU back-to-front sort on camera change, then GPU radix sort (compute) behind the same API
-- [ ] Blending: back-to-front premultiplied alpha, depth-write off, depth-test against the opaque scene
-- [ ] Higher-order SH: loader reads `f_rest_*` (degrees 1-3); shader evaluates SH from view direction; `SplatQuality { sh_degree }` runtime cap (0 = current behavior)
-- [ ] Pass camera view matrix alongside view_proj to `SplatPipeline::render` (keep `new`/`set_cloud` signatures stable)
+- [x] `Splat::covariance3d()` CPU helper (R S Sᵀ Rᵀ) with unit tests (axis-aligned + rotated)
+- [x] Anisotropic splat shader: project 3D covariance to a 2D screen-space ellipse via the perspective Jacobian (+ low-pass), oriented quad, Gaussian alpha falloff in the fragment stage
+- [x] Move per-splat data to a storage buffer; vertex shader reads via a sorted index buffer
+- [ ] Depth sorting: CPU back-to-front sort on camera change, then GPU radix sort (compute) behind the same API — **CPU sort done** (per-chunk, re-sorted only when the view-projection changes; cross-chunk order by chunk center); **GPU radix sort not started**
+- [x] Blending: back-to-front premultiplied alpha, depth-write off, depth-test against the opaque scene
+- [x] Higher-order SH: loader reads `f_rest_*` (degrees 1-3); shader evaluates SH from view direction; `SplatQuality { sh_degree }` runtime cap (0 = current behavior)
+- [x] Pass camera view matrix alongside view_proj to `SplatPipeline::render` (keep `new`/`set_cloud` signatures stable) — `render` now takes a `SplatCamera { view, view_proj, viewport_px }`
 
 ### B: Physics/collision proxies
-- [ ] `proxy.rs`: floater filtering (opacity threshold, oversized scale, k-nearest density outliers)
-- [ ] Opacity-weighted voxelization of the filtered cloud
-- [ ] Voxel-boundary surface mesh → `tpt_nova_ingest::decompose::decompose_convex` (VHACD) → multi-part `Collider3D`; per-component hull fallback
-- [ ] Serializable `ProxyParams` + `attach_proxy_collider`; keep `build_convex_hull_collider` for back-compat
-- [ ] Tests: separated blobs → ≥2 parts, floaters removed, concave L-shape tighter than single hull
-- [ ] Update `tpt-nova-sample-game` pipeline step to use the multi-part proxy
+- [x] `proxy.rs`: floater filtering (opacity threshold, oversized scale, k-nearest density outliers)
+- [x] Opacity-weighted voxelization of the filtered cloud
+- [x] Voxel-boundary surface mesh → VHACD → multi-part `Collider3D`; per-component hull fallback
+- [x] Serializable `ProxyParams` + `attach_proxy_collider`; keep `build_convex_hull_collider` for back-compat
+- [x] Tests: separated blobs → ≥2 parts, floaters removed, concave L-shape tighter than single hull
+- [x] Update `tpt-nova-sample-game` pipeline step to use the multi-part proxy
 
 ### C: Scale & performance
-- [ ] Compressed format loader (quantized `.compressed.ply` / SPZ-style), dispatched by extension in `load_file`
-- [ ] Frustum culling + distance LOD over spatial chunks
-- [ ] `SplatCloud::decimate(ratio)` (seeded/deterministic)
-- [ ] Chunked GPU upload for very large clouds
+- [x] Compressed format loader (quantized `.compressed.ply`), dispatched by extension in `load_file` and auto-detected in `load_ply_bytes` — **PlayCanvas-style layout only; SPZ is not implemented, and the reader is validated by round-trip tests only, not against a third-party-exported asset**
+- [x] Frustum culling + distance LOD over spatial chunks
+- [x] `SplatCloud::decimate(ratio)` (seeded/deterministic)
+- [x] Chunked GPU upload for very large clouds (one storage-buffer set and bind group per spatial chunk)
 
 ### D: ECS-native editing & agent integration
-- [ ] Edit ops: `select_in_aabb`, `select_in_screen_rect` (reuse `tpt-nova-overlay`), `delete`, `crop`, `transform`
-- [ ] Splat telemetry summary (count, bounds, sh_degree, opacity histogram) via `tpt-nova-telemetry`
-- [ ] Additive `AgentCommand` variants (e.g. `CropSplat`, `RegenerateSplatProxy`) in `tpt-nova-agent-api`, respecting `MAX_COMMANDS_PER_POLL`
-- [ ] Highlight & Fix: region selection over a splat entity yields a splat-subset selection in the AI fix prompt
-- [ ] (Stretch) Dynamic splats: per-splat bone weights bound to `tpt-nova-anim` skeletons
+- [x] Edit ops: `select_in_aabb`, `select_in_screen_rect` (reuse `tpt-nova-overlay`), `delete`, `crop`, `transform` — `transform` is exact for non-uniform scale; SH coefficients are not rotated
+- [x] Splat telemetry summary (count, bounds, sh_degree, opacity histogram) via `tpt-nova-telemetry`
+- [x] Additive `AgentCommand` variants (`CropSplat`, `RegenerateSplatProxy`) in `tpt-nova-agent-api`; they go through the existing `MAX_COMMANDS_PER_POLL` path
+- [ ] Highlight & Fix: region selection over a splat entity yields a splat-subset selection in the AI fix prompt — **crate-level helpers done** (`select_in_screen_rect`, `SplatSelection::prompt_entry`); **not yet wired into the viewport's Highlight & Fix flow in `tpt-nova-app`**
+- [ ] (Stretch) Dynamic splats: per-splat bone weights bound to `tpt-nova-anim` skeletons — not started
 
 ### Housekeeping
-- [ ] Update `tpt-nova-splat` README and the CLAUDE.md splat blurb once A/B land
+- [x] Update `tpt-nova-splat` README and the CLAUDE.md splat blurb once A/B land
