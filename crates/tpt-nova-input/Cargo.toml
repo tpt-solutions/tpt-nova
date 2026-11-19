@@ -10,4 +10,4 @@ keywords = ["input", "keyboard", "mouse", "action-map", "ecs"]
 categories = ["game-engines"]
 
 [dependencies]
-tpt-window-core = { path = "../../../tpt-window/tpt-window-core" }
+tpt-window-core = { git = "https://github.com/tpt-solutions/tpt-window" }

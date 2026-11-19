@@ -3738,6 +3738,7 @@ version = "0.1.0"
 [[package]]
 name = "tpt-window"
 version = "0.1.0"
+source = "git+https://github.com/tpt-solutions/tpt-window#b6f73fd8f4441237a0f0d0bfeb1b39e247cd5d5b"
 dependencies = [
  "tpt-window-core",
  "tpt-window-sys-cocoa",
@@ -3750,6 +3751,7 @@ dependencies = [
 [[package]]
 name = "tpt-window-core"
 version = "0.1.0"
+source = "git+https://github.com/tpt-solutions/tpt-window#b6f73fd8f4441237a0f0d0bfeb1b39e247cd5d5b"
 dependencies = [
  "raw-window-handle",
  "web-time",
@@ -3758,6 +3760,7 @@ dependencies = [
 [[package]]
 name = "tpt-window-sys-cocoa"
 version = "0.1.0"
+source = "git+https://github.com/tpt-solutions/tpt-window#b6f73fd8f4441237a0f0d0bfeb1b39e247cd5d5b"
 dependencies = [
  "objc2",
  "objc2-app-kit",
@@ -3769,6 +3772,7 @@ dependencies = [
 [[package]]
 name = "tpt-window-sys-wasm"
 version = "0.1.0"
+source = "git+https://github.com/tpt-solutions/tpt-window#b6f73fd8f4441237a0f0d0bfeb1b39e247cd5d5b"
 dependencies = [
  "js-sys",
  "raw-window-handle",
@@ -3780,6 +3784,7 @@ dependencies = [
 [[package]]
 name = "tpt-window-sys-wayland"
 version = "0.1.0"
+source = "git+https://github.com/tpt-solutions/tpt-window#b6f73fd8f4441237a0f0d0bfeb1b39e247cd5d5b"
 dependencies = [
  "raw-window-handle",
  "smithay-client-toolkit",
@@ -3790,6 +3795,7 @@ dependencies = [
 [[package]]
 name = "tpt-window-sys-win32"
 version = "0.1.0"
+source = "git+https://github.com/tpt-solutions/tpt-window#b6f73fd8f4441237a0f0d0bfeb1b39e247cd5d5b"
 dependencies = [
  "raw-window-handle",
  "tpt-window-core",
@@ -3799,6 +3805,7 @@ dependencies = [
 [[package]]
 name = "tpt-window-sys-x11"
 version = "0.1.0"
+source = "git+https://github.com/tpt-solutions/tpt-window#b6f73fd8f4441237a0f0d0bfeb1b39e247cd5d5b"
 dependencies = [
  "libc",
  "raw-window-handle",
