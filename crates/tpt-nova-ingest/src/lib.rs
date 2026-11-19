@@ -5,19 +5,21 @@
 //!
 //! 1. **Load** — [`load`] reads `.glb`/`.gltf`/`.obj` into plain [`MeshData`]
 //!    (see [`loader`]).
-//! 2. **Decompose** — [`decompose_convex`] runs V-HACD to split concave meshes
+//! 2. **Decompose** — [`decompose_convex`] runs approximate convex decomposition to split concave meshes
 //!    into approximately-convex [`ConvexPart`]s for collision (see [`decompose`]).
 //! 3. **Auto-rig** — [`auto_rig`] derives a procedural skeleton from the bounds
 //!    (see [`rig`]).
 //! 4. **Collide** — [`Collider3D`] + [`PhysicsWorld3D`] feed those parts to
-//!    Rapier3D (see [`physics`]).
+//!    the in-house 3D rigid body solver (see [`physics`]).
 //!
 //! [`ingest`] runs the whole chain and returns an [`IngestResult`].
 
 pub mod decompose;
+pub mod hull;
 pub mod loader;
 pub mod physics;
 pub mod rig;
+mod solver3d;
 
 use std::path::Path;
 

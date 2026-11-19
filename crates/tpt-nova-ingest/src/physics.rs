@@ -1,29 +1,27 @@
-//! Rapier3D physics integration for ingested meshes.
+//! 3D rigid body physics for ingested meshes.
 //!
 //! Mirrors the 2D design in `tpt-nova-physics`: gameplay code only touches plain
 //! [`RigidBody3D`] / [`Collider3D`] components and the entity [`Transform`];
-//! all Rapier state lives in the [`PhysicsWorld3D`] resource. Each fixed tick,
+//! all solver state lives in the [`PhysicsWorld3D`] resource. Each fixed tick,
 //! [`step_physics_3d`] reconciles bodies, pushes kinematic velocities, advances
 //! the simulation, and reads transforms back into the ECS.
 //!
-//! A [`Collider3D`] stores the VHACD [`ConvexPart`]s produced by the ingestion
-//! pipeline; the step builds a Rapier compound shape (one convex hull per part)
-//! so a concave ingested mesh still collides correctly.
+//! A [`Collider3D`] stores the [`ConvexPart`]s produced by the ingestion
+//! pipeline. The solver (see [`crate::solver3d`]) treats them as a compound of
+//! convex hulls, so a concave ingested mesh still collides correctly.
 //!
-//! Note: rapier3d 0.34 is built on `glam` (via `glamx`), so all math types here
-//! are `glam` types re-exported through `rapier3d::math`.
+//! The solver is in-house, replacing Rapier3D so the workspace stays free of
+//! Apache-2.0-only dependencies.
 
 use std::collections::{HashMap, HashSet};
 
 use glam::Vec3;
-use rapier3d::geometry::{ColliderBuilder, SharedShape};
-use rapier3d::math::{Pose3, Vector};
-use rapier3d::prelude::*;
 use serde::{Deserialize, Serialize};
 use tpt_nova_ecs::transform::Transform;
 use tpt_nova_ecs::{component::Component, Entity, World};
 
 use crate::decompose::ConvexPart;
+use crate::solver3d::{self, Body3D, CachedImpulse, LocalHull};
 
 /// How a 3D body participates in the simulation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -80,7 +78,7 @@ impl RigidBody3D {
 
 impl Component for RigidBody3D {}
 
-/// A collider built from VHACD convex parts of an ingested mesh (or any set of
+/// A collider built from convex parts of an ingested mesh (or any set of
 /// convex hulls supplied by gameplay).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Collider3D {
@@ -114,20 +112,20 @@ impl Collider3D {
 
 impl Component for Collider3D {}
 
-/// The Rapier3D simulation state, stored as a world resource.
+/// Per-body data the solver does not need but the sync step does.
+#[derive(Debug, Clone, Copy)]
+struct BodyMeta {
+    entity: Entity,
+    kind: BodyKind3D,
+}
+
+/// The 3D simulation state, stored as a world resource.
 pub struct PhysicsWorld3D {
     pub gravity: Vec3,
-    integration_parameters: IntegrationParameters,
-    islands: IslandManager,
-    broad_phase: DefaultBroadPhase,
-    narrow_phase: NarrowPhase,
-    bodies: RigidBodySet,
-    colliders: ColliderSet,
-    impulse_joints: ImpulseJointSet,
-    multibody_joints: MultibodyJointSet,
-    ccd_solver: CCDSolver,
-    pipeline: PhysicsPipeline,
-    entity_to_body: HashMap<Entity, RigidBodyHandle>,
+    bodies: Vec<Body3D>,
+    meta: Vec<BodyMeta>,
+    entity_to_body: HashMap<Entity, usize>,
+    impulse_cache: Vec<CachedImpulse>,
 }
 
 impl Default for PhysicsWorld3D {
@@ -140,17 +138,10 @@ impl PhysicsWorld3D {
     pub fn new(gravity: Vec3) -> Self {
         PhysicsWorld3D {
             gravity,
-            integration_parameters: IntegrationParameters::default(),
-            islands: IslandManager::new(),
-            broad_phase: DefaultBroadPhase::new(),
-            narrow_phase: NarrowPhase::new(),
-            bodies: RigidBodySet::new(),
-            colliders: ColliderSet::new(),
-            impulse_joints: ImpulseJointSet::new(),
-            multibody_joints: MultibodyJointSet::new(),
-            ccd_solver: CCDSolver::new(),
-            pipeline: PhysicsPipeline::new(),
+            bodies: Vec::new(),
+            meta: Vec::new(),
             entity_to_body: HashMap::new(),
+            impulse_cache: Vec::new(),
         }
     }
 
@@ -161,46 +152,54 @@ impl PhysicsWorld3D {
     pub fn has_body(&self, entity: Entity) -> bool {
         self.entity_to_body.contains_key(&entity)
     }
-}
 
-fn body_type_of(kind: BodyKind3D) -> RigidBodyType {
-    match kind {
-        BodyKind3D::Dynamic => RigidBodyType::Dynamic,
-        BodyKind3D::Fixed => RigidBodyType::Fixed,
-        BodyKind3D::KinematicVelocity => RigidBodyType::KinematicVelocityBased,
-    }
-}
-
-/// Build a Rapier compound collider from VHACD convex parts.
-fn build_collider(c: &Collider3D) -> Collider {
-    let mut shapes: Vec<(Pose3, SharedShape)> = Vec::new();
-    for part in &c.parts {
-        let pts: Vec<Vector> = part
-            .vertices
-            .iter()
-            .map(|v| Vector::new(v[0], v[1], v[2]))
-            .collect();
-        if pts.len() < 4 {
-            continue;
-        }
-        if let Some(hull) = SharedShape::convex_hull(&pts) {
-            shapes.push((Pose3::identity(), hull));
+    fn remove_body(&mut self, entity: Entity) {
+        if let Some(index) = self.entity_to_body.remove(&entity) {
+            self.bodies.remove(index);
+            // Cached impulses refer to body indices, which just shifted.
+            self.impulse_cache.clear();
+            self.meta.remove(index);
+            self.entity_to_body.clear();
+            for (i, m) in self.meta.iter().enumerate() {
+                self.entity_to_body.insert(m.entity, i);
+            }
         }
     }
-    let compound = SharedShape::compound(shapes);
-    ColliderBuilder::new(compound)
-        .restitution(c.restitution)
-        .friction(c.friction)
-        .density(c.density)
-        .sensor(c.sensor)
-        .build()
 }
 
-/// Encode a `glam` quaternion as the axis*angle vector rapier's body builder
-/// expects (`rotation_from_angle(angle_vector)`).
-fn quat_to_axis_angle_vec(q: glam::Quat) -> Vector {
-    let (axis, angle) = q.to_axis_angle();
-    Vector::new(axis.x * angle, axis.y * angle, axis.z * angle)
+/// Build the local hulls for a collider, skipping parts with no volume.
+fn local_hulls(c: &Collider3D) -> Vec<LocalHull> {
+    c.parts.iter().filter_map(LocalHull::from_part).collect()
+}
+
+/// Inverse principal inertia of the axis-aligned box spanning `hulls`, scaled
+/// to `mass`. A box approximation keeps the solver simple and stable.
+fn inv_inertia_for(hulls: &[LocalHull], mass: f32) -> Vec3 {
+    if hulls.is_empty() || mass <= 0.0 {
+        return Vec3::ZERO;
+    }
+    let (mut lo, mut hi) = (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY));
+    for h in hulls {
+        for v in &h.verts {
+            lo = lo.min(*v);
+            hi = hi.max(*v);
+        }
+    }
+    let s = hi - lo;
+    let i = Vec3::new(
+        mass / 12.0 * (s.y * s.y + s.z * s.z),
+        mass / 12.0 * (s.x * s.x + s.z * s.z),
+        mass / 12.0 * (s.x * s.x + s.y * s.y),
+    );
+    Vec3::new(inv(i.x), inv(i.y), inv(i.z))
+}
+
+fn inv(x: f32) -> f32 {
+    if x > 0.0 {
+        1.0 / x
+    } else {
+        0.0
+    }
 }
 
 /// Advance the 3D physics simulation by `dt` seconds and sync with the ECS.
@@ -210,12 +209,14 @@ pub fn step_physics_3d(world: &mut World, dt: f32) {
         None => return,
     };
 
-    // 1/2. Reconcile entities that have bodies.
-    let current: Vec<Entity> = world
+    // 1/2. Reconcile entities that have bodies. Sorted so body order does not
+    // depend on the ECS query order.
+    let mut current: Vec<Entity> = world
         .query_1::<RigidBody3D>()
         .into_iter()
         .map(|(e, _)| e)
         .collect();
+    current.sort_unstable();
     let current_set: HashSet<Entity> = current.iter().copied().collect();
 
     let stale: Vec<Entity> = phys
@@ -225,16 +226,7 @@ pub fn step_physics_3d(world: &mut World, dt: f32) {
         .filter(|e| !current_set.contains(e))
         .collect();
     for e in stale {
-        if let Some(handle) = phys.entity_to_body.remove(&e) {
-            phys.bodies.remove(
-                handle,
-                &mut phys.islands,
-                &mut phys.colliders,
-                &mut phys.impulse_joints,
-                &mut phys.multibody_joints,
-                true,
-            );
-        }
+        phys.remove_body(e);
     }
 
     for e in &current {
@@ -247,103 +239,83 @@ pub fn step_physics_3d(world: &mut World, dt: f32) {
             .copied()
             .unwrap_or_default();
 
-        let mut builder = RigidBodyBuilder::new(body_type_of(rb.kind))
-            .translation(Vector::new(
-                t.translation.x,
-                t.translation.y,
-                t.translation.z,
-            ))
-            .rotation(quat_to_axis_angle_vec(t.rotation))
-            .linvel(Vector::new(rb.linvel.x, rb.linvel.y, rb.linvel.z))
-            .angvel(Vector::new(rb.angvel.x, rb.angvel.y, rb.angvel.z))
-            .gravity_scale(rb.gravity_scale)
-            .linear_damping(rb.linear_damping)
-            .angular_damping(rb.angular_damping);
-        if rb.lock_rotations {
-            builder = builder.lock_rotations();
-        }
-        let handle = phys.bodies.insert(builder.build());
-
+        let mut body = Body3D {
+            pos: t.translation,
+            rot: t.rotation,
+            vel: rb.linvel,
+            angvel: rb.angvel,
+            inv_mass: 0.0,
+            inv_inertia_local: Vec3::ZERO,
+            parts: Vec::new(),
+            restitution: 0.0,
+            friction: 0.5,
+            sensor: false,
+            is_static: rb.kind != BodyKind3D::Dynamic,
+            gravity_scale: rb.gravity_scale,
+            linear_damping: rb.linear_damping,
+            angular_damping: rb.angular_damping,
+        };
         if let Some(col) = world.get_component::<Collider3D>(*e).cloned() {
-            if !col.parts.is_empty() {
-                let collider = build_collider(&col);
-                let bodies = &mut phys.bodies;
-                phys.colliders.insert_with_parent(collider, handle, bodies);
+            let hulls = local_hulls(&col);
+            let volume: f32 = hulls.iter().map(|h| h.volume).sum();
+            let mass = (col.density * volume).max(1e-6);
+            body.restitution = col.restitution;
+            body.friction = col.friction;
+            body.sensor = col.sensor;
+            if rb.kind == BodyKind3D::Dynamic {
+                body.inv_mass = inv(mass);
+                if !rb.lock_rotations {
+                    body.inv_inertia_local = inv_inertia_for(&hulls, mass);
+                }
             }
+            body.parts = hulls;
+        } else if rb.kind == BodyKind3D::Dynamic {
+            // A dynamic body with no collider still falls under gravity.
+            body.inv_mass = 1.0;
+        }
+        if rb.lock_rotations {
+            // Locked bodies keep their orientation: no initial spin either.
+            body.angvel = Vec3::ZERO;
         }
 
-        phys.entity_to_body.insert(*e, handle);
+        let index = phys.bodies.len();
+        phys.bodies.push(body);
+        phys.meta.push(BodyMeta {
+            entity: *e,
+            kind: rb.kind,
+        });
+        phys.entity_to_body.insert(*e, index);
     }
 
     // 3. Push kinematic velocities.
-    let pushes: Vec<(RigidBodyHandle, Vec3, Vec3)> = current
-        .iter()
-        .filter_map(|e| {
-            let rb = world.get_component::<RigidBody3D>(*e)?;
-            if rb.kind == BodyKind3D::KinematicVelocity {
-                let h = *phys.entity_to_body.get(e)?;
-                Some((h, rb.linvel, rb.angvel))
-            } else {
-                None
-            }
-        })
-        .collect();
-    for (handle, linvel, angvel) in pushes {
-        if let Some(body) = phys.bodies.get_mut(handle) {
-            body.set_linvel(Vector::new(linvel.x, linvel.y, linvel.z), true);
-            body.set_angvel(Vector::new(angvel.x, angvel.y, angvel.z), true);
+    for i in 0..phys.meta.len() {
+        if phys.meta[i].kind != BodyKind3D::KinematicVelocity {
+            continue;
+        }
+        if let Some(rb) = world.get_component::<RigidBody3D>(phys.meta[i].entity) {
+            phys.bodies[i].vel = rb.linvel;
+            phys.bodies[i].angvel = rb.angvel;
         }
     }
 
     // 4. Step the simulation.
-    phys.integration_parameters.dt = dt;
-    let gravity = Vector::new(phys.gravity.x, phys.gravity.y, phys.gravity.z);
-    let PhysicsWorld3D {
-        integration_parameters,
-        islands,
-        broad_phase,
-        narrow_phase,
-        bodies,
-        colliders,
-        impulse_joints,
-        multibody_joints,
-        ccd_solver,
-        pipeline,
-        ..
-    } = &mut phys;
-    pipeline.step(
-        gravity,
-        integration_parameters,
-        islands,
-        broad_phase,
-        narrow_phase,
-        bodies,
-        colliders,
-        impulse_joints,
-        multibody_joints,
-        ccd_solver,
-        &(),
-        &(),
-    );
+    let gravity = phys.gravity;
+    solver3d::step(&mut phys.bodies, gravity, dt, &mut phys.impulse_cache);
 
     // 5. Read back into the ECS.
-    let readback: Vec<(Entity, RigidBodyHandle)> =
-        phys.entity_to_body.iter().map(|(e, h)| (*e, *h)).collect();
-    for (e, handle) in readback {
-        let (pos, rot) = match phys.bodies.get(handle) {
-            Some(body) => {
-                let p = body.translation();
-                let r = *body.rotation();
-                // `r` is rapier's (glam 0.33) quaternion; `Transform` uses
-                // tpt-nova-ecs's glam 0.29 quaternion, so rebuild it from components.
-                let q = glam::Quat::from_xyzw(r.x, r.y, r.z, r.w);
-                (Vec3::new(p.x, p.y, p.z), q)
-            }
-            None => continue,
-        };
-        if let Some(t) = world.get_component_mut::<Transform>(e) {
+    for i in 0..phys.bodies.len() {
+        let m = phys.meta[i];
+        let b = &phys.bodies[i];
+        let (pos, rot, linvel, angvel) = (b.pos, b.rot, b.vel, b.angvel);
+        if let Some(t) = world.get_component_mut::<Transform>(m.entity) {
             t.translation = pos;
             t.rotation = rot;
+        }
+        if let Some(rb) = world.get_component_mut::<RigidBody3D>(m.entity) {
+            if rb.kind != BodyKind3D::KinematicVelocity {
+                rb.linvel = linvel;
+                rb.angvel = angvel;
+            }
         }
     }
 
@@ -353,10 +325,9 @@ pub fn step_physics_3d(world: &mut World, dt: f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::decompose::ConvexPart;
     use tpt_nova_ecs::Vec3 as EcsVec3;
 
-    /// A unit cube as a single convex part (8 verts, 12 tris).
+    /// A cube of the given half-extent as a single convex part (outward triangles).
     fn cube_parts(half: f32) -> Vec<ConvexPart> {
         let v = [
             [-half, -half, -half],
@@ -369,18 +340,18 @@ mod tests {
             [-half, half, half],
         ];
         let idx: [[u32; 3]; 12] = [
-            [0, 1, 2],
-            [0, 2, 3],
-            [4, 6, 5],
-            [4, 7, 6],
-            [0, 4, 5],
-            [0, 5, 1],
-            [1, 5, 6],
-            [1, 6, 2],
-            [2, 6, 7],
-            [2, 7, 3],
-            [3, 7, 4],
-            [3, 4, 0],
+            [0, 2, 1],
+            [0, 3, 2],
+            [4, 5, 6],
+            [4, 6, 7],
+            [0, 1, 5],
+            [0, 5, 4],
+            [1, 2, 6],
+            [1, 6, 5],
+            [2, 3, 7],
+            [2, 7, 6],
+            [3, 0, 4],
+            [3, 4, 7],
         ];
         vec![ConvexPart {
             vertices: v.to_vec(),
@@ -455,5 +426,66 @@ mod tests {
         world.despawn(e);
         step_physics_3d(&mut world, 1.0 / 60.0);
         assert_eq!(world.resource::<PhysicsWorld3D>().unwrap().body_count(), 0);
+    }
+
+    #[test]
+    fn locked_rotation_body_does_not_spin() {
+        let mut world = World::new();
+        world.add_resource(PhysicsWorld3D::default());
+        let e = world.spawn();
+        world.add_component(e, Transform::from_translation(EcsVec3::new(0.0, 10.0, 0.0)));
+        let mut rb = RigidBody3D::dynamic();
+        rb.angvel = EcsVec3::new(0.0, 3.0, 0.0);
+        rb.lock_rotations = true;
+        world.add_component(e, rb);
+        world.add_component(e, Collider3D::from_parts(cube_parts(0.5)));
+        for _ in 0..10 {
+            step_physics_3d(&mut world, 1.0 / 60.0);
+        }
+        let w = world.get_component::<RigidBody3D>(e).unwrap().angvel;
+        assert!(w.length() < 1e-6, "locked body must not spin, w={w:?}");
+    }
+
+    #[test]
+    fn cube_stack_settles_on_ground() {
+        let mut world = World::new();
+        world.add_resource(PhysicsWorld3D::default());
+        let ground = world.spawn();
+        world.add_component(ground, Transform::default());
+        world.add_component(ground, RigidBody3D::fixed());
+        world.add_component(ground, Collider3D::from_parts(cube_parts(5.0)));
+
+        let lower = world.spawn();
+        world.add_component(
+            lower,
+            Transform::from_translation(EcsVec3::new(0.0, 6.0, 0.0)),
+        );
+        world.add_component(lower, RigidBody3D::dynamic());
+        world.add_component(lower, Collider3D::from_parts(cube_parts(0.5)));
+
+        let upper = world.spawn();
+        world.add_component(
+            upper,
+            Transform::from_translation(EcsVec3::new(0.0, 8.0, 0.0)),
+        );
+        world.add_component(upper, RigidBody3D::dynamic());
+        world.add_component(upper, Collider3D::from_parts(cube_parts(0.5)));
+
+        for _ in 0..900 {
+            step_physics_3d(&mut world, 1.0 / 60.0);
+        }
+        let y_lower = world
+            .get_component::<Transform>(lower)
+            .unwrap()
+            .translation
+            .y;
+        let y_upper = world
+            .get_component::<Transform>(upper)
+            .unwrap()
+            .translation
+            .y;
+        // Ground top y=5; lower centre ~5.5; upper ~6.5. Allow some slack.
+        assert!((5.3..5.8).contains(&y_lower), "lower cube y={y_lower}");
+        assert!((6.2..6.9).contains(&y_upper), "upper cube y={y_upper}");
     }
 }
