@@ -200,6 +200,20 @@ impl AudioEngine {
         }
     }
 
+    /// An engine with no output device, never touching the platform audio
+    /// backend. Used by headless tests so CI runners without audio endpoints
+    /// don't open cpal streams (a native crash there cannot be caught).
+    #[cfg(test)]
+    fn headless() -> Self {
+        AudioEngine {
+            device: None,
+            mixer: Mixer::new(),
+            music: None,
+            sfx: Vec::new(),
+            spatial: Vec::new(),
+        }
+    }
+
     /// True if a real output device is available.
     pub fn is_active(&self) -> bool {
         self.device.is_some()
@@ -410,9 +424,9 @@ mod tests {
 
     #[test]
     fn engine_is_silent_without_panicking() {
-        // On CI there is no audio device; play_* must not panic and should
-        // simply report that nothing started.
-        let mut engine = AudioEngine::new();
+        // No audio device; play_* must not panic and should simply report
+        // that nothing started.
+        let mut engine = AudioEngine::headless();
         let sound = Sound::from_bytes(make_wav(&[0i16; 100], 44_100));
         let _ = engine.play_sfx(&sound, 0.8);
         let _ = engine.play_music(&sound, true);
@@ -428,7 +442,7 @@ mod tests {
     fn stop_music_during_loop_is_safe() {
         // Whether or not a device exists, starting a looping track and stopping
         // it mid-loop must be safe and idempotent.
-        let mut engine = AudioEngine::new();
+        let mut engine = AudioEngine::headless();
         let sound = Sound::from_bytes(make_wav(&[0i16; 100], 44_100));
         let started = engine.play_music(&sound, true);
         engine.stop_music();
@@ -440,7 +454,7 @@ mod tests {
 
     #[test]
     fn bus_volume_changes_reapply_without_device() {
-        let mut engine = AudioEngine::new();
+        let mut engine = AudioEngine::headless();
         let sound = Sound::from_bytes(make_wav(&[0i16; 100], 44_100));
         let _ = engine.play_sfx(&sound, 1.0);
         // Changing bus volumes re-applies gains to live voices; must not panic
@@ -456,7 +470,7 @@ mod tests {
         // On a headless machine play_spatial must not panic and simply reports
         // that nothing started; the analytic gain model is independently tested
         // in the mixer.
-        let mut engine = AudioEngine::new();
+        let mut engine = AudioEngine::headless();
         let sound = Sound::from_bytes(make_wav(&[0i16; 100], 44_100));
         let listener = Listener::default();
         let started = engine.play_spatial(
@@ -477,7 +491,7 @@ mod tests {
     fn spatial_gain_preview_matches_mixer_model() {
         // The engine's analytic preview must agree with `Mixer::spatial_gain`,
         // so headless code can reason about what a positional source will do.
-        let engine = AudioEngine::new();
+        let engine = AudioEngine::headless();
         let listener = Listener::default();
         let params = SpatialParams::default();
         let [l, r] =
@@ -498,7 +512,7 @@ mod tests {
         // The `SpatialParams` rolloff model must actually move the gain: a
         // steeper rolloff attenuates a mid-distance source more than the linear
         // default, proving `play_spatial` no longer ignores `params`.
-        let engine = AudioEngine::new();
+        let engine = AudioEngine::headless();
         let listener = Listener::default();
         let src = [10.0, 0.0, 0.0];
         let linear =
