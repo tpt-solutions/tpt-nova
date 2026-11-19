@@ -10,5 +10,9 @@ keywords = ["audio", "rodio", "spatial-audio", "mixer", "game"]
 categories = ["multimedia::audio", "game-engines"]
 
 [dependencies]
-rodio = "0.22"
+rodio = { version = "0.22", default-features = false, features = ["playback", "lewton", "minimp3"] }
 log = "0.4"
+# FLAC decoding, from the tpt-cadence codec suite (MIT OR Apache-2.0). Pinned to
+# a commit so the build is reproducible; see deny.toml for the allowed git source.
+tpt-av-cadence-core = { git = "https://github.com/tpt-solutions/tpt-cadence", rev = "48b8e4b6273f5a047ae8650d3d1e9d3fbb01aa70" }
+tpt-av-cadence-flac = { git = "https://github.com/tpt-solutions/tpt-cadence", rev = "48b8e4b6273f5a047ae8650d3d1e9d3fbb01aa70" }

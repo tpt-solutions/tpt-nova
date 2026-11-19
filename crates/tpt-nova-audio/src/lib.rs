@@ -6,19 +6,99 @@
 //! headless machine (CI, servers) the engine degrades to a no-op so game code
 //! can call `play_*` unconditionally.
 
+pub mod flac;
 pub mod mixer;
+pub mod wav;
 
 use std::io::Cursor;
 use std::path::Path;
 use std::sync::Arc;
 
+use rodio::buffer::SamplesBuffer;
 use rodio::source::Source;
 use rodio::stream::{DeviceSinkBuilder, MixerDeviceSink};
-use rodio::{Decoder, Player, SpatialPlayer};
+use rodio::{Decoder, Player, Sample, SpatialPlayer};
 
 pub use mixer::{spatial_attenuation, Bus, Listener, Mixer, SpatialParams, Vec3};
 
-/// An in-memory decodable sound (WAV/OGG/FLAC/MP3, per rodio's decoders).
+/// Error returned when a [`Sound`] cannot be decoded.
+#[derive(Debug)]
+pub enum DecodeError {
+    /// The bytes have a RIFF/WAVE header but the WAV decoder rejected them.
+    Wav(wav::WavError),
+    /// The bytes were handed to rodio (Ogg Vorbis / MP3) and it failed.
+    Stream(rodio::decoder::DecoderError),
+    /// The bytes start with `fLaC` but the FLAC decoder rejected them.
+    Flac(tpt_av_cadence_core::CadenceError),
+}
+
+impl std::fmt::Display for DecodeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DecodeError::Wav(e) => write!(f, "{e}"),
+            DecodeError::Stream(e) => write!(f, "{e}"),
+            DecodeError::Flac(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+impl std::error::Error for DecodeError {}
+
+/// A decoded, playable sound. WAV is decoded fully into memory by [`wav`];
+/// Ogg Vorbis and MP3 are streamed through rodio's decoders.
+pub enum Decoded {
+    Wav(SamplesBuffer),
+    Stream(Box<Decoder<Cursor<Vec<u8>>>>),
+    Flac(Box<flac::FlacSource>),
+}
+
+impl Iterator for Decoded {
+    type Item = Sample;
+
+    fn next(&mut self) -> Option<Sample> {
+        match self {
+            Decoded::Wav(s) => s.next(),
+            Decoded::Stream(s) => s.next(),
+            Decoded::Flac(s) => s.next(),
+        }
+    }
+}
+
+impl Source for Decoded {
+    fn current_span_len(&self) -> Option<usize> {
+        match self {
+            Decoded::Wav(s) => s.current_span_len(),
+            Decoded::Stream(s) => s.current_span_len(),
+            Decoded::Flac(s) => s.current_span_len(),
+        }
+    }
+
+    fn channels(&self) -> rodio::ChannelCount {
+        match self {
+            Decoded::Wav(s) => s.channels(),
+            Decoded::Stream(s) => s.channels(),
+            Decoded::Flac(s) => s.channels(),
+        }
+    }
+
+    fn sample_rate(&self) -> rodio::SampleRate {
+        match self {
+            Decoded::Wav(s) => s.sample_rate(),
+            Decoded::Stream(s) => s.sample_rate(),
+            Decoded::Flac(s) => s.sample_rate(),
+        }
+    }
+
+    fn total_duration(&self) -> Option<std::time::Duration> {
+        match self {
+            Decoded::Wav(s) => s.total_duration(),
+            Decoded::Stream(s) => s.total_duration(),
+            Decoded::Flac(s) => s.total_duration(),
+        }
+    }
+}
+
+/// An in-memory decodable sound (WAV, Ogg Vorbis, or MP3).
 ///
 /// The raw encoded bytes are kept and decoded on each play, so one `Sound` can
 /// back many simultaneous voices cheaply (no giant PCM buffer per instance).
@@ -38,18 +118,29 @@ impl Sound {
         Ok(Sound::from_bytes(std::fs::read(path)?))
     }
 
-    fn cursor(&self) -> Cursor<Vec<u8>> {
-        Cursor::new((*self.bytes).clone())
-    }
-
-    /// Decode into a one-shot source.
-    pub fn decode(&self) -> Result<Decoder<Cursor<Vec<u8>>>, rodio::decoder::DecoderError> {
-        Decoder::new(self.cursor())
+    /// Decode into a one-shot source. The container is detected from the
+    /// header: RIFF/WAVE goes to [`wav::decode_wav`], `fLaC` goes to
+    /// [`flac::FlacSource`]; anything else is handed to rodio, which handles
+    /// Ogg Vorbis and MP3.
+    pub fn decode(&self) -> Result<Decoded, DecodeError> {
+        if wav::is_wav(&self.bytes) {
+            return wav::decode_wav(&self.bytes)
+                .map(Decoded::Wav)
+                .map_err(DecodeError::Wav);
+        }
+        if flac::is_flac(&self.bytes) {
+            return flac::FlacSource::open((*self.bytes).clone())
+                .map(|s| Decoded::Flac(Box::new(s)))
+                .map_err(DecodeError::Flac);
+        }
+        Decoder::new(Cursor::new((*self.bytes).clone()))
+            .map(|d| Decoded::Stream(Box::new(d)))
+            .map_err(DecodeError::Stream)
     }
 
     /// Total number of samples (across channels). Handy for tests and for
     /// estimating length without playing.
-    pub fn sample_count(&self) -> Result<usize, rodio::decoder::DecoderError> {
+    pub fn sample_count(&self) -> Result<usize, DecodeError> {
         Ok(self.decode()?.count())
     }
 }
