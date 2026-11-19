@@ -107,7 +107,7 @@ pub struct RealEmbedder {
 #[cfg(feature = "real-embeddings")]
 impl RealEmbedder {
     /// Load the local embedding model. Downloads weights on first use.
-    pub fn new() -> Result<Self, fastembed::FastEmbedError> {
+    pub fn new() -> Result<Self, fastembed::Error> {
         let model = fastembed::TextEmbedding::try_new(Default::default())?;
         Ok(Self { model })
     }

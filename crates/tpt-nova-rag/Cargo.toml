@@ -18,10 +18,13 @@ thiserror = "1"
 # one-time model download). Not in the default feature set so the offline
 # FeatureHashEmbedder remains the CI/default path.
 fastembed = { version = "3", optional = true }
-# ort-sys is an indirect dep via fastembed/ort; declared here so we can add the
-# tls-native feature that ort-sys's build script requires when download-binaries
-# is active (ort 2.x rc series does not expose TLS pass-throughs on the ort crate).
-ort-sys = { version = "=2.0.0-rc.12", features = ["tls-rustls"], optional = true }
+# fastembed 3.14.1 pins ort "=2.0.0-rc.4", and ort rc.4 requires ort-sys
+# "^2.0.0-rc.4". That caret range also accepts rc.12, so an unpinned or rc.12
+# ort-sys gets unified into ort rc.4 and fails to compile (missing `size_t`,
+# `GetApi` fn-pointer API changes). Pin ort-sys to the exact rc.4 release so the
+# pair stays consistent. rc.4 has no `tls-rustls` feature; its download path uses
+# ureq's default TLS, so no extra feature is needed.
+ort-sys = { version = "=2.0.0-rc.4", optional = true }
 
 [features]
 default = []
