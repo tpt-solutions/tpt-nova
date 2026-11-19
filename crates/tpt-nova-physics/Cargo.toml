@@ -6,14 +6,13 @@ license.workspace = true
 repository.workspace = true
 description = "Rapier2D physics integration for TPT Nova's ECS (components + deterministic sync step)"
 readme = "README.md"
-keywords = ["physics", "rapier2d", "ecs", "deterministic", "simulation"]
+keywords = ["physics", "2d", "ecs", "deterministic", "simulation"]
 categories = ["game-engines", "simulation"]
 
 [dependencies]
 tpt-nova-ecs = { workspace = true }
 glam = { version = "0.29", features = ["std", "serde"] }
 serde = { version = "1", features = ["derive"] }
-rapier2d = "0.34"
 
 [dev-dependencies]
 tpt-nova-telemetry = { path = "../tpt-nova-telemetry" }

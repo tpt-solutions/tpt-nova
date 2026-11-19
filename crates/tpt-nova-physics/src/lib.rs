@@ -1,43 +1,47 @@
-//! Rapier2D physics integrated as ECS components + a deterministic sync step.
+//! 2D rigid body physics integrated as ECS components + a deterministic sync step.
 //!
 //! Design: gameplay code only ever touches the plain [`RigidBody2D`] /
-//! [`Collider2D`] components and the entity [`Transform`]. All Rapier state
+//! [`Collider2D`] components and the entity [`Transform`]. All solver state
 //! lives in the [`PhysicsWorld`] resource. Each fixed tick, [`step_physics`]:
 //!
-//! 1. creates Rapier bodies/colliders for newly-seen entities,
+//! 1. creates solver bodies for newly-seen entities,
 //! 2. removes bodies for entities that lost their component or despawned,
 //! 3. pushes kinematic velocities from components into the sim,
 //! 4. advances the simulation by the fixed timestep, and
 //! 5. reads body transforms/velocities back into the ECS.
 //!
-//! The timestep is fixed and the world is stepped in lockstep with the engine
-//! tick, which keeps the simulation reproducible from a seed.
+//! The solver is in-house (see [`solver`]), replacing Rapier2D so the workspace
+//! stays free of Apache-2.0-only dependencies. Bodies are stepped in entity
+//! order and the timestep is fixed, so the simulation is reproducible from a seed.
 
 pub mod components;
+pub mod solver;
 
 use std::collections::{HashMap, HashSet};
 
 use glam::{EulerRot, Quat, Vec2};
-use rapier2d::prelude::*;
 use tpt_nova_ecs::transform::Transform;
 use tpt_nova_ecs::{Entity, World};
 
 pub use components::{BodyKind, Collider2D, ColliderShape, RigidBody2D};
+use solver::{capsule_polygon, LocalShape, SolverBody};
 
-/// The Rapier simulation state, stored as a world resource.
+/// Per-body data the solver does not need but the sync step does.
+#[derive(Debug, Clone, Copy)]
+struct BodyMeta {
+    entity: Entity,
+    kind: BodyKind,
+    gravity_scale: f32,
+    linear_damping: f32,
+    angular_damping: f32,
+}
+
+/// The 2D simulation state, stored as a world resource.
 pub struct PhysicsWorld {
     pub gravity: Vec2,
-    integration_parameters: IntegrationParameters,
-    islands: IslandManager,
-    broad_phase: DefaultBroadPhase,
-    narrow_phase: NarrowPhase,
-    bodies: RigidBodySet,
-    colliders: ColliderSet,
-    impulse_joints: ImpulseJointSet,
-    multibody_joints: MultibodyJointSet,
-    ccd_solver: CCDSolver,
-    pipeline: PhysicsPipeline,
-    entity_to_body: HashMap<Entity, RigidBodyHandle>,
+    bodies: Vec<SolverBody>,
+    meta: Vec<BodyMeta>,
+    entity_to_body: HashMap<Entity, usize>,
 }
 
 impl Default for PhysicsWorld {
@@ -50,16 +54,8 @@ impl PhysicsWorld {
     pub fn new(gravity: Vec2) -> Self {
         PhysicsWorld {
             gravity,
-            integration_parameters: IntegrationParameters::default(),
-            islands: IslandManager::new(),
-            broad_phase: DefaultBroadPhase::new(),
-            narrow_phase: NarrowPhase::new(),
-            bodies: RigidBodySet::new(),
-            colliders: ColliderSet::new(),
-            impulse_joints: ImpulseJointSet::new(),
-            multibody_joints: MultibodyJointSet::new(),
-            ccd_solver: CCDSolver::new(),
-            pipeline: PhysicsPipeline::new(),
+            bodies: Vec::new(),
+            meta: Vec::new(),
             entity_to_body: HashMap::new(),
         }
     }
@@ -69,17 +65,24 @@ impl PhysicsWorld {
         self.bodies.len()
     }
 
-    /// Whether an entity currently has a Rapier body.
+    /// Whether an entity currently has a body.
     pub fn has_body(&self, entity: Entity) -> bool {
         self.entity_to_body.contains_key(&entity)
     }
-}
 
-fn body_type_of(kind: BodyKind) -> RigidBodyType {
-    match kind {
-        BodyKind::Dynamic => RigidBodyType::Dynamic,
-        BodyKind::Fixed => RigidBodyType::Fixed,
-        BodyKind::KinematicVelocity => RigidBodyType::KinematicVelocityBased,
+    fn remove_body(&mut self, entity: Entity) {
+        if let Some(index) = self.entity_to_body.remove(&entity) {
+            self.bodies.remove(index);
+            self.meta.remove(index);
+            self.reindex();
+        }
+    }
+
+    fn reindex(&mut self) {
+        self.entity_to_body.clear();
+        for (i, m) in self.meta.iter().enumerate() {
+            self.entity_to_body.insert(m.entity, i);
+        }
     }
 }
 
@@ -88,21 +91,20 @@ fn z_angle(rot: Quat) -> f32 {
     z
 }
 
-fn build_collider(c: &Collider2D) -> Collider {
-    let builder = match c.shape {
-        ColliderShape::Ball { radius } => ColliderBuilder::ball(radius),
-        ColliderShape::Cuboid { half_x, half_y } => ColliderBuilder::cuboid(half_x, half_y),
+fn local_shape(shape: ColliderShape) -> LocalShape {
+    match shape {
+        ColliderShape::Ball { radius } => LocalShape::Circle { radius },
+        ColliderShape::Cuboid { half_x, half_y } => LocalShape::Polygon(vec![
+            Vec2::new(-half_x, -half_y),
+            Vec2::new(half_x, -half_y),
+            Vec2::new(half_x, half_y),
+            Vec2::new(-half_x, half_y),
+        ]),
         ColliderShape::Capsule {
             half_height,
             radius,
-        } => ColliderBuilder::capsule_y(half_height, radius),
-    };
-    builder
-        .restitution(c.restitution)
-        .friction(c.friction)
-        .density(c.density)
-        .sensor(c.sensor)
-        .build()
+        } => LocalShape::Polygon(capsule_polygon(half_height, radius)),
+    }
 }
 
 /// Advance the physics simulation by `dt` seconds and sync it with the ECS.
@@ -117,14 +119,16 @@ pub fn step_physics(world: &mut World, dt: f32) {
     };
 
     // --- 1/2. Reconcile which entities have bodies -----------------------
-    let current: Vec<Entity> = world
+    // Sorted so body order (and therefore contact resolution order) does not
+    // depend on the ECS query order.
+    let mut current: Vec<Entity> = world
         .query_1::<RigidBody2D>()
         .into_iter()
         .map(|(e, _)| e)
         .collect();
+    current.sort_unstable();
     let current_set: HashSet<Entity> = current.iter().copied().collect();
 
-    // Remove bodies for entities that no longer have a RigidBody2D.
     let stale: Vec<Entity> = phys
         .entity_to_body
         .keys()
@@ -132,19 +136,9 @@ pub fn step_physics(world: &mut World, dt: f32) {
         .filter(|e| !current_set.contains(e))
         .collect();
     for e in stale {
-        if let Some(handle) = phys.entity_to_body.remove(&e) {
-            phys.bodies.remove(
-                handle,
-                &mut phys.islands,
-                &mut phys.colliders,
-                &mut phys.impulse_joints,
-                &mut phys.multibody_joints,
-                true,
-            );
-        }
+        phys.remove_body(e);
     }
 
-    // Create bodies for newly-seen entities.
     for e in &current {
         if phys.entity_to_body.contains_key(e) {
             continue;
@@ -154,103 +148,86 @@ pub fn step_physics(world: &mut World, dt: f32) {
             .get_component::<Transform>(*e)
             .copied()
             .unwrap_or_default();
+        let collider = world.get_component::<Collider2D>(*e).copied();
 
-        let mut builder = RigidBodyBuilder::new(body_type_of(rb.kind))
-            .translation(Vector::new(t.translation.x, t.translation.y))
-            .rotation(z_angle(t.rotation))
-            .linvel(Vector::new(rb.linvel.x, rb.linvel.y))
-            .angvel(rb.angvel)
-            .gravity_scale(rb.gravity_scale)
-            .linear_damping(rb.linear_damping)
-            .angular_damping(rb.angular_damping);
+        let mut body = SolverBody {
+            pos: Vec2::new(t.translation.x, t.translation.y),
+            angle: z_angle(t.rotation),
+            vel: rb.linvel,
+            angvel: rb.angvel,
+            inv_mass: 0.0,
+            inv_inertia: 0.0,
+            shape: None,
+            restitution: 0.0,
+            friction: 0.5,
+            sensor: false,
+            is_static: rb.kind != BodyKind::Dynamic,
+        };
+        if let Some(col) = collider {
+            let shape = local_shape(col.shape);
+            let props = shape.mass_props(col.density);
+            body.shape = Some(shape);
+            body.restitution = col.restitution;
+            body.friction = col.friction;
+            body.sensor = col.sensor;
+            if rb.kind == BodyKind::Dynamic {
+                body.inv_mass = inv(props.mass);
+                if !rb.lock_rotation {
+                    body.inv_inertia = inv(props.inertia);
+                }
+            }
+        } else if rb.kind == BodyKind::Dynamic {
+            // A dynamic body with no collider still falls under gravity.
+            body.inv_mass = 1.0;
+        }
         if rb.lock_rotation {
-            builder = builder.lock_rotations();
-        }
-        let handle = phys.bodies.insert(builder.build());
-
-        if let Some(col) = world.get_component::<Collider2D>(*e).copied() {
-            let collider = build_collider(&col);
-            let bodies = &mut phys.bodies;
-            phys.colliders.insert_with_parent(collider, handle, bodies);
+            body.angvel = 0.0;
         }
 
-        phys.entity_to_body.insert(*e, handle);
+        let index = phys.bodies.len();
+        phys.bodies.push(body);
+        phys.meta.push(BodyMeta {
+            entity: *e,
+            kind: rb.kind,
+            gravity_scale: rb.gravity_scale,
+            linear_damping: rb.linear_damping,
+            angular_damping: rb.angular_damping,
+        });
+        phys.entity_to_body.insert(*e, index);
     }
 
-    // --- 3. Push kinematic velocities from components --------------------
-    let pushes: Vec<(RigidBodyHandle, Vec2, f32)> = current
-        .iter()
-        .filter_map(|e| {
-            let rb = world.get_component::<RigidBody2D>(*e)?;
-            if rb.kind == BodyKind::KinematicVelocity {
-                let h = *phys.entity_to_body.get(e)?;
-                Some((h, rb.linvel, rb.angvel))
-            } else {
-                None
-            }
-        })
-        .collect();
-    for (handle, linvel, angvel) in pushes {
-        if let Some(body) = phys.bodies.get_mut(handle) {
-            body.set_linvel(Vector::new(linvel.x, linvel.y), true);
-            body.set_angvel(angvel, true);
+    // --- 3. Push kinematic velocities from components ---------------------
+    for (i, m) in phys.meta.iter().enumerate() {
+        if m.kind != BodyKind::KinematicVelocity {
+            continue;
+        }
+        if let Some(rb) = world.get_component::<RigidBody2D>(m.entity) {
+            phys.bodies[i].vel = rb.linvel;
+            phys.bodies[i].angvel = rb.angvel;
         }
     }
 
     // --- 4. Step the simulation -----------------------------------------
-    phys.integration_parameters.dt = dt;
-    let gravity = Vector::new(phys.gravity.x, phys.gravity.y);
-    let PhysicsWorld {
-        integration_parameters,
-        islands,
-        broad_phase,
-        narrow_phase,
-        bodies,
-        colliders,
-        impulse_joints,
-        multibody_joints,
-        ccd_solver,
-        pipeline,
-        ..
-    } = &mut phys;
-    pipeline.step(
-        gravity,
-        integration_parameters,
-        islands,
-        broad_phase,
-        narrow_phase,
-        bodies,
-        colliders,
-        impulse_joints,
-        multibody_joints,
-        ccd_solver,
-        &(),
-        &(),
-    );
+    let gravity = phys.gravity;
+    let scales: Vec<f32> = phys.meta.iter().map(|m| m.gravity_scale).collect();
+    let damping: Vec<(f32, f32)> = phys
+        .meta
+        .iter()
+        .map(|m| (m.linear_damping, m.angular_damping))
+        .collect();
+    solver::step(&mut phys.bodies, gravity, &scales, &damping, dt);
 
     // --- 5. Read body state back into the ECS ---------------------------
-    let readback: Vec<(Entity, RigidBodyHandle)> =
-        phys.entity_to_body.iter().map(|(e, h)| (*e, *h)).collect();
-    for (e, handle) in readback {
-        let (pos, angle, linvel, angvel) = match phys.bodies.get(handle) {
-            Some(body) => {
-                let p = body.translation();
-                let lv = body.linvel();
-                (
-                    Vec2::new(p.x, p.y),
-                    body.rotation().angle(),
-                    Vec2::new(lv.x, lv.y),
-                    body.angvel(),
-                )
-            }
-            None => continue,
-        };
-        if let Some(t) = world.get_component_mut::<Transform>(e) {
+    for i in 0..phys.bodies.len() {
+        let m = phys.meta[i];
+        let b = &phys.bodies[i];
+        let (pos, angle, linvel, angvel) = (b.pos, b.angle, b.vel, b.angvel);
+        if let Some(t) = world.get_component_mut::<Transform>(m.entity) {
             t.translation.x = pos.x;
             t.translation.y = pos.y;
             t.rotation = Quat::from_rotation_z(angle);
         }
-        if let Some(rb) = world.get_component_mut::<RigidBody2D>(e) {
+        if let Some(rb) = world.get_component_mut::<RigidBody2D>(m.entity) {
             if rb.kind != BodyKind::KinematicVelocity {
                 rb.linvel = linvel;
                 rb.angvel = angvel;
@@ -259,6 +236,14 @@ pub fn step_physics(world: &mut World, dt: f32) {
     }
 
     world.add_resource(phys);
+}
+
+fn inv(x: f32) -> f32 {
+    if x > 0.0 {
+        1.0 / x
+    } else {
+        0.0
+    }
 }
 
 #[cfg(test)]
@@ -397,5 +382,42 @@ mod tests {
             a, b,
             "two identical simulations must produce identical state (determinism regression)"
         );
+    }
+
+    #[test]
+    fn box_stacks_on_box_and_comes_to_rest() {
+        let mut world = World::new();
+        world.add_resource(PhysicsWorld::default());
+        let ground = world.spawn();
+        world.add_component(ground, Transform::default());
+        world.add_component(ground, RigidBody2D::fixed());
+        world.add_component(ground, Collider2D::new(ColliderShape::cuboid(10.0, 0.5)));
+
+        let lower = world.spawn();
+        world.add_component(lower, Transform::from_translation(Vec3::new(0.0, 2.0, 0.0)));
+        world.add_component(lower, RigidBody2D::dynamic());
+        world.add_component(lower, Collider2D::new(ColliderShape::cuboid(0.5, 0.5)));
+
+        let upper = world.spawn();
+        world.add_component(upper, Transform::from_translation(Vec3::new(0.0, 4.0, 0.0)));
+        world.add_component(upper, RigidBody2D::dynamic());
+        world.add_component(upper, Collider2D::new(ColliderShape::cuboid(0.5, 0.5)));
+
+        for _ in 0..600 {
+            step_physics(&mut world, 1.0 / 60.0);
+        }
+        let y_lower = world
+            .get_component::<Transform>(lower)
+            .unwrap()
+            .translation
+            .y;
+        let y_upper = world
+            .get_component::<Transform>(upper)
+            .unwrap()
+            .translation
+            .y;
+        // Ground top y=0.5; lower box centre ~1.0; upper ~2.0. Allow some slack.
+        assert!((0.8..1.2).contains(&y_lower), "lower box y={y_lower}");
+        assert!((1.8..2.3).contains(&y_upper), "upper box y={y_upper}");
     }
 }
