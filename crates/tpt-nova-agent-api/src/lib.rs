@@ -29,6 +29,7 @@ use glam::EulerRot;
 use serde::{Deserialize, Serialize};
 use tpt_nova_ecs::transform::{Mesh, MeshKind, Transform};
 use tpt_nova_ecs::{Entity, Quat, Vec3, World};
+use tpt_nova_splat::{attach_proxy_collider, Aabb, ProxyParams, SplatCloud};
 
 /// The command-schema version this build understands. Bump on any breaking
 /// change to [`AgentCommand`] or [`ControlFile`] so mismatched agents are
@@ -50,6 +51,8 @@ pub enum AgentApiError {
     MalformedEntityId(String),
     #[error("control file changed but failed to parse: {0}")]
     ControlParse(String),
+    #[error("splat operation failed: {0}")]
+    Splat(String),
 }
 
 /// How an agent names the entity it wants to act on.
@@ -104,6 +107,20 @@ pub enum AgentCommand {
     SetRotation {
         target: EntityRef,
         rotation_euler_xyz: [f32; 3],
+    },
+    /// Keep only the splats of a splat entity whose centers lie inside the box
+    /// `[min, max]` (in the cloud's own coordinates).
+    CropSplat {
+        target: EntityRef,
+        min: [f32; 3],
+        max: [f32; 3],
+    },
+    /// Rebuild a splat entity's multi-part collision proxy. `params` defaults
+    /// to [`tpt_nova_splat::ProxyParams::default`] when omitted.
+    RegenerateSplatProxy {
+        target: EntityRef,
+        #[serde(default)]
+        params: Option<ProxyParams>,
     },
 }
 
@@ -258,6 +275,30 @@ pub fn apply_command(world: &mut World, cmd: &AgentCommand) -> Result<(), AgentA
                 rotation_euler_xyz[1],
                 rotation_euler_xyz[2],
             );
+            Ok(())
+        }
+        AgentCommand::CropSplat { target, min, max } => {
+            let e = resolve(world, target)?;
+            let cloud = world
+                .get_component_mut::<SplatCloud>(e)
+                .ok_or_else(|| AgentApiError::UnknownEntity(format!("{e}")))?;
+            cloud.crop(&Aabb {
+                min: *min,
+                max: *max,
+            });
+            if cloud.is_empty() {
+                return Err(AgentApiError::Splat("crop removed every splat".to_string()));
+            }
+            Ok(())
+        }
+        AgentCommand::RegenerateSplatProxy { target, params } => {
+            let e = resolve(world, target)?;
+            let cloud = world
+                .get_component::<SplatCloud>(e)
+                .cloned()
+                .ok_or_else(|| AgentApiError::UnknownEntity(format!("{e}")))?;
+            attach_proxy_collider(world, e, &cloud, &params.unwrap_or_default())
+                .map_err(|err| AgentApiError::Splat(err.to_string()))?;
             Ok(())
         }
     }

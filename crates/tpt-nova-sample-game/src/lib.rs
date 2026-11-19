@@ -11,7 +11,7 @@ use tpt_nova_ecs::transform::{GlobalTransform, Transform};
 use tpt_nova_ecs::{Entity, Vec3, World};
 use tpt_nova_ingest::decompose::ConvexPart;
 use tpt_nova_ingest::{step_physics_3d, Collider3D, PhysicsWorld3D, RigidBody3D};
-use tpt_nova_splat::{build_convex_hull_collider, load_splat_bytes, SplatCloud};
+use tpt_nova_splat::{build_proxy_collider, load_splat_bytes, ProxyParams, SplatCloud};
 
 /// One axis-aligned box collider (8 corners, 12 triangles) of half-extents
 /// `(hx, hy, hz)`, centered at the origin — the building block for the sample.
@@ -138,13 +138,16 @@ pub fn run_pipeline() -> String {
         let mut rec = [0u8; 32];
         rec[0..4].copy_from_slice(&p.to_le_bytes());
         rec[4..8].copy_from_slice(&((i % 7) as f32).to_le_bytes());
-        rec[8..12].copy_from_slice(&(p * 0.5).to_le_bytes());
+        // Lift z off the x/y plane so the cloud spans 3D (a coplanar cloud has no hull).
+        rec[8..12].copy_from_slice(&(p * 0.5 + (i % 3) as f32).to_le_bytes());
         rec[24] = 200;
+        rec[27] = 255; // opaque: the collision proxy drops transparent floaters
         rec[28] = 255;
         splat_bytes.extend_from_slice(&rec);
     }
     let cloud: SplatCloud = load_splat_bytes(&splat_bytes).unwrap();
-    let splat_collider = build_convex_hull_collider(&cloud).unwrap();
+    let (splat_collider, _proxy_report) =
+        build_proxy_collider(&cloud, &ProxyParams::default()).unwrap();
     assert!(!splat_collider.parts.is_empty());
 
     // 5) Package the scene file into a distributable asset pack.
@@ -241,13 +244,15 @@ mod tests {
             let mut rec = [0u8; 32];
             rec[0..4].copy_from_slice(&p.to_le_bytes());
             rec[4..8].copy_from_slice(&((i % 5) as f32).to_le_bytes());
-            rec[8..12].copy_from_slice(&p.to_le_bytes());
+            // Lift z off the x/y plane so the cloud spans 3D (a coplanar cloud has no hull).
+            rec[8..12].copy_from_slice(&(p + (i % 4) as f32).to_le_bytes());
             rec[24] = 255;
+            rec[27] = 255; // opaque: the collision proxy drops transparent floaters
             rec[28] = 255;
             buf.extend_from_slice(&rec);
         }
         let cloud = load_splat_bytes(&buf).unwrap();
-        let col = build_convex_hull_collider(&cloud).unwrap();
+        let (col, _) = build_proxy_collider(&cloud, &ProxyParams::default()).unwrap();
         assert!(!col.parts.is_empty());
     }
 
