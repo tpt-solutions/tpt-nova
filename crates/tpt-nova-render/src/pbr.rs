@@ -18,8 +18,8 @@ use tpt_nova_ecs::light::Light;
 use tpt_nova_ecs::transform::{GlobalTransform, Mesh};
 use tpt_nova_ecs::world::World;
 use tpt_nova_ecs::{ActiveCamera, Mat4, Vec3};
+use tpt_window::Window;
 use wgpu::util::DeviceExt;
-use winit::window::Window;
 
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24Plus;
 const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -68,7 +68,6 @@ impl Vertex {
 
 /// A forward PBR renderer with one shadow-casting directional light.
 pub struct PbrRenderer {
-    window: Arc<Window>,
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -90,12 +89,21 @@ pub struct PbrRenderer {
     index_count: u32,
     main_bind_group: wgpu::BindGroup,
     shadow_bind_group: wgpu::BindGroup,
+    /// Declared last so it drops after `surface`, which refers to its raw handles.
+    window: Arc<Window>,
 }
 
 impl PbrRenderer {
     pub fn new(window: Arc<Window>) -> anyhow::Result<Self> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-        let surface = instance.create_surface(Arc::clone(&window))?;
+        // SAFETY: the window is stored in the renderer, declared last so it drops
+        // after the surface, which refers to the window's raw handles.
+        let surface = unsafe {
+            instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
+                raw_display_handle: Some(window.raw_display_handle()?),
+                raw_window_handle: window.raw_window_handle()?,
+            })?
+        };
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: Some(&surface),
@@ -111,7 +119,7 @@ impl PbrRenderer {
                 ..Default::default()
             }))?;
 
-        let size = window.inner_size();
+        let size = window.size();
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format: surface

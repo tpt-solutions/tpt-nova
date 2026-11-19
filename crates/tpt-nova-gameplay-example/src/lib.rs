@@ -111,7 +111,7 @@ mod tests {
     fn world_with_player_pressing_right() -> (World, Entity) {
         let mut world = World::new();
         let mut input = InputState::default();
-        input.keys.insert(KeyCode::KeyD); // bound to "move_right"
+        input.keys.insert(KeyCode::D); // bound to "move_right"
         world.add_resource(input);
         world.add_resource(default_action_map());
 
