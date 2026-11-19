@@ -1,27 +1,39 @@
 //! Loaders for Gaussian Splat captures.
 //!
-//! Two on-disk layouts are supported:
+//! Three on-disk layouts are supported:
 //!
 //! * `.splat` — the compact 32-byte-per-Gaussian layout popularized by
 //!   antimatter15's viewer ([`load_splat_bytes`]).
 //! * `.ply` — the standard 3D Gaussian Splatting export, which stores one
 //!   `vertex` element whose properties carry the raw (pre-activation) Gaussian
 //!   parameters ([`load_ply_bytes`]). Both ASCII and `binary_little_endian`
-//!   PLY are accepted.
+//!   PLY are accepted. Higher-order SH bands (`f_rest_*`) are read when present.
+//! * `.compressed.ply` — the quantized, chunked layout (see [`crate::compress`]).
+//!   [`load_ply_bytes`] detects it automatically from its `packed_position`
+//!   vertex property, so `.ply` callers need not special-case it.
 
 use std::path::Path;
 
+use crate::sh::{self, SH_FLOATS};
 use crate::{normalize_quat, sh_dc_to_linear, sigmoid, Splat, SplatCloud, SplatError};
 
-/// Load a splat cloud from a file, dispatching on the `.splat`/`.ply` extension.
+/// Load a splat cloud from a file, dispatching on the extension.
 pub fn load_file<P: AsRef<Path>>(path: P) -> Result<SplatCloud, SplatError> {
     let path = path.as_ref();
+    let name = path
+        .file_name()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .unwrap_or_default();
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
         .map(|e| e.to_ascii_lowercase());
     match ext.as_deref() {
         Some("splat") => load_splat_bytes(&std::fs::read(path)?),
+        Some("ply") if name.ends_with(".compressed.ply") => {
+            crate::compress::load_compressed_ply_bytes(&std::fs::read(path)?)
+        }
         Some("ply") => load_ply_bytes(&std::fs::read(path)?),
         _ => Err(SplatError::UnknownExtension),
     }
@@ -52,7 +64,7 @@ pub fn load_splat_bytes(bytes: &[u8]) -> Result<SplatCloud, SplatError> {
 // ---- .ply -----------------------------------------------------------------
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PlyType {
+pub(crate) enum PlyType {
     I8,
     U8,
     I16,
@@ -64,7 +76,7 @@ enum PlyType {
 }
 
 impl PlyType {
-    fn size(self) -> usize {
+    pub(crate) fn size(self) -> usize {
         match self {
             PlyType::I8 | PlyType::U8 => 1,
             PlyType::I16 | PlyType::U16 => 2,
@@ -74,9 +86,9 @@ impl PlyType {
     }
 
     /// Decode one scalar of this type from `buf` at offset, advancing `offset`.
-    /// For unsigned integer types used as colors, the value is normalized to
-    /// `0..=1`; float types pass through untouched.
-    fn read(self, buf: &[u8], offset: &mut usize) -> Result<f64, SplatError> {
+    /// Unsigned 8-bit values are normalized to `0..=1` (they are used as colors);
+    /// every other type passes through unchanged.
+    pub(crate) fn read(self, buf: &[u8], offset: &mut usize) -> Result<f64, SplatError> {
         let sz = self.size();
         if *offset + sz > buf.len() {
             return Err(SplatError::MalformedPly("unexpected end of data".into()));
@@ -116,23 +128,19 @@ fn parse_property(line: &str) -> Option<(PlyType, String)> {
     Some((ty, name))
 }
 
-/// Look up a named property's value from a decoded row by column index.
-fn lookup_column(
-    cols: &std::collections::HashMap<String, usize>,
-    row: &[f64],
-    name: &str,
-) -> Option<f64> {
-    cols.get(name).and_then(|&i| row.get(i).copied())
+/// One PLY element: name, declared row count, and its typed properties.
+pub(crate) type PlyElement = (String, u64, Vec<(PlyType, String)>);
+
+/// A parsed PLY header plus the byte offset where the body starts.
+pub(crate) struct PlyHeader {
+    pub format: String,
+    pub elements: Vec<PlyElement>,
+    pub body_start: usize,
 }
 
-/// Decode a `.ply` byte buffer into a [`SplatCloud`].
-///
-/// Only the `vertex` element is interpreted; any subsequent elements (e.g.
-/// `camera`, `edge`) are skipped. Properties beyond the recognized Gaussian
-/// set are tolerated and ignored.
-pub fn load_ply_bytes(bytes: &[u8]) -> Result<SplatCloud, SplatError> {
-    // The header is ASCII; only the body may contain arbitrary binary. Locate
-    // the `end_header` marker so we never force the whole file through UTF-8.
+/// Parse the ASCII header of a PLY file. Only the header is decoded as text, so
+/// arbitrary binary bodies never need to be valid UTF-8.
+pub(crate) fn parse_ply_header(bytes: &[u8]) -> Result<PlyHeader, SplatError> {
     let marker = b"end_header";
     let marker_pos = bytes
         .windows(marker.len())
@@ -146,10 +154,8 @@ pub fn load_ply_bytes(bytes: &[u8]) -> Result<SplatCloud, SplatError> {
         .map_err(|_| SplatError::MalformedPly("header is not valid UTF-8".into()))?;
 
     let mut format = "ascii".to_string();
-    #[allow(clippy::type_complexity)]
-    let mut elements: Vec<(String, u64, Vec<(PlyType, String)>)> = Vec::new();
-    #[allow(clippy::type_complexity)]
-    let mut current: Option<(String, u64, Vec<(PlyType, String)>)> = None;
+    let mut elements: Vec<PlyElement> = Vec::new();
+    let mut current: Option<PlyElement> = None;
 
     for line in header_str.lines() {
         let trimmed = line.trim();
@@ -181,12 +187,32 @@ pub fn load_ply_bytes(bytes: &[u8]) -> Result<SplatCloud, SplatError> {
             }
         }
     }
+    Ok(PlyHeader {
+        format,
+        elements,
+        body_start,
+    })
+}
 
-    // Find the vertex element.
-    let vertex = elements
+/// Decode a `.ply` byte buffer into a [`SplatCloud`].
+///
+/// Only the `vertex` element is interpreted; any subsequent elements (e.g.
+/// `camera`, `edge`) are skipped. Properties beyond the recognized Gaussian
+/// set are tolerated and ignored. Files using the quantized layout are routed
+/// to [`crate::compress`] automatically.
+pub fn load_ply_bytes(bytes: &[u8]) -> Result<SplatCloud, SplatError> {
+    let header = parse_ply_header(bytes)?;
+    let vertex = header
+        .elements
         .iter()
         .find(|e| e.0 == "vertex")
         .ok_or_else(|| SplatError::MalformedPly("no vertex element".into()))?;
+    if vertex.2.iter().any(|(_, n)| n == "packed_position") {
+        return crate::compress::load_compressed_ply_bytes(bytes);
+    }
+
+    let format = header.format.as_str();
+    let body_start = header.body_start;
     let count = vertex.1 as usize;
     if count == 0 {
         return Err(SplatError::EmptyCloud);
@@ -200,11 +226,30 @@ pub fn load_ply_bytes(bytes: &[u8]) -> Result<SplatCloud, SplatError> {
         .map(|(i, (_, n))| (n.clone(), i))
         .collect();
 
+    // Higher-order SH: derive the degree from how many f_rest_* properties exist.
+    let rest_count = vertex
+        .2
+        .iter()
+        .filter(|(_, n)| n.starts_with("f_rest_"))
+        .count();
+    let sh_degree = sh::degree_from_rest_count(rest_count).unwrap_or(0);
+    let rest_per_channel = sh::rest_coeffs_per_channel(sh_degree);
+
     let mut splats = Vec::with_capacity(count);
+    let mut sh_blocks: Vec<[f32; SH_FLOATS]> =
+        Vec::with_capacity(if sh_degree > 0 { count } else { 0 });
+
+    let mut push_row = |row: &[f64]| {
+        splats.push(decode_vertex(&cols, row));
+        if sh_degree > 0 {
+            sh_blocks.push(decode_sh(&cols, row, sh_degree, rest_per_channel));
+        }
+    };
 
     if format == "ascii" {
         let ascii_body = std::str::from_utf8(&bytes[body_start..])
             .map_err(|_| SplatError::MalformedPly("ascii body not UTF-8".into()))?;
+        let mut rows_seen = 0usize;
         for line in ascii_body.lines().take(count) {
             let values: Vec<f64> = line
                 .split_whitespace()
@@ -215,9 +260,10 @@ pub fn load_ply_bytes(bytes: &[u8]) -> Result<SplatCloud, SplatError> {
                     "vertex row has too few values".into(),
                 ));
             }
-            splats.push(decode_vertex(&cols, &values));
+            push_row(&values);
+            rows_seen += 1;
         }
-        if splats.len() != count {
+        if rows_seen != count {
             return Err(SplatError::MalformedPly(
                 "truncated ascii vertex rows".into(),
             ));
@@ -230,11 +276,11 @@ pub fn load_ply_bytes(bytes: &[u8]) -> Result<SplatCloud, SplatError> {
             for (ty, _) in &vertex.2 {
                 row.push(ty.read(rest, &mut offset)?);
             }
-            splats.push(decode_vertex(&cols, &row));
+            push_row(&row);
         }
         // Skip any subsequent elements' binary data so we stay consistent with
         // the element counts declared in the header.
-        for el in elements.iter().skip(1) {
+        for el in header.elements.iter().skip(1) {
             if el.0 == "vertex" {
                 continue;
             }
@@ -253,13 +299,48 @@ pub fn load_ply_bytes(bytes: &[u8]) -> Result<SplatCloud, SplatError> {
     if splats.is_empty() {
         return Err(SplatError::EmptyCloud);
     }
+    if sh_degree > 0 {
+        return SplatCloud::with_sh(splats, sh_blocks, sh_degree);
+    }
     Ok(SplatCloud::new(splats))
+}
+
+/// Gather one vertex's SH block from `f_dc_*` and `f_rest_*` columns.
+///
+/// `f_rest` is channel-major in 3DGS exports: the first `rest_per_channel`
+/// values are red's higher bands, the next block green's, then blue's.
+fn decode_sh(
+    cols: &std::collections::HashMap<String, usize>,
+    row: &[f64],
+    degree: u8,
+    rest_per_channel: usize,
+) -> [f32; SH_FLOATS] {
+    let dc = [
+        lookup_column(cols, row, "f_dc_0").unwrap_or(0.0) as f32,
+        lookup_column(cols, row, "f_dc_1").unwrap_or(0.0) as f32,
+        lookup_column(cols, row, "f_dc_2").unwrap_or(0.0) as f32,
+    ];
+    let total = 3 * rest_per_channel;
+    let mut rest = Vec::with_capacity(total);
+    for i in 0..total {
+        let v = lookup_column(cols, row, &format!("f_rest_{i}")).unwrap_or(0.0);
+        rest.push(v as f32);
+    }
+    sh::pack_sh(dc, &rest, degree)
+}
+
+/// Look up a named property's value from a decoded row by column index.
+fn lookup_column(
+    cols: &std::collections::HashMap<String, usize>,
+    row: &[f64],
+    name: &str,
+) -> Option<f64> {
+    cols.get(name).and_then(|&i| row.get(i).copied())
 }
 
 /// Turn one decoded PLY vertex row into a [`Splat`], applying 3DGS activations
 /// when the canonical property names are present.
 fn decode_vertex(cols: &std::collections::HashMap<String, usize>, row: &[f64]) -> Splat {
-    // `get` is the local column lookup used throughout the decode below.
     let get = lookup_column;
     let x = lookup_column(cols, row, "x").unwrap_or(0.0);
     let y = lookup_column(cols, row, "y").unwrap_or(0.0);
@@ -367,6 +448,7 @@ mod tests {
         assert_eq!(cloud.len(), 2);
         assert_eq!(cloud.splats[0].position, [1.0, 0.0, 0.0]);
         assert!((cloud.splats[0].scale[0] - 2.0).abs() < 1e-4);
+        assert!(!cloud.has_sh());
     }
 
     #[test]
@@ -417,6 +499,34 @@ end_header
         assert!((cloud.splats[0].opacity - 0.5).abs() < 1e-4);
         // f_dc_0 = 0 -> sh_dc_to_linear(0) = 0.5 gray.
         assert!((cloud.splats[0].color[0] - 0.5).abs() < 1e-4);
+        assert!(!cloud.has_sh());
+    }
+
+    #[test]
+    fn ascii_ply_with_f_rest_attaches_sh_degree_one() {
+        // Three f_rest per channel (degree 1) -> 9 f_rest properties.
+        let mut header = String::from(
+            "ply\nformat ascii 1.0\nelement vertex 1\n\
+             property float x\nproperty float y\nproperty float z\n\
+             property float f_dc_0\nproperty float f_dc_1\nproperty float f_dc_2\n",
+        );
+        for i in 0..9 {
+            header.push_str(&format!("property float f_rest_{i}\n"));
+        }
+        header.push_str("property float opacity\nend_header\n");
+        // dc = (0.5, 0, 0); red's first higher band = 0.25 (f_rest_0).
+        let mut row = String::from("0 0 0 0.5 0 0");
+        row.push_str(" 0.25 0 0 0 0 0 0 0 0");
+        row.push_str(" 0\n");
+        let buf = format!("{header}{row}").into_bytes();
+        let cloud = load_ply_bytes(&buf).unwrap();
+        assert_eq!(cloud.sh_degree, 1);
+        assert!(cloud.has_sh());
+        assert!((cloud.sh[0][0] - 0.5).abs() < 1e-6, "raw DC kept");
+        assert!(
+            (cloud.sh[0][1] - 0.25).abs() < 1e-6,
+            "red band 1 is f_rest_0"
+        );
     }
 
     #[test]

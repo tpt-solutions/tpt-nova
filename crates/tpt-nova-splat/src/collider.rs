@@ -8,11 +8,10 @@
 //! gives captured environments solid, stable collision at a fraction of the
 //! cost, at the expense of concavities (acceptable for a first-pass proxy).
 
-use parry3d::math::Vector;
-use parry3d::transformation::try_convex_hull;
 use tpt_nova_ecs::transform::Transform;
 use tpt_nova_ecs::World;
 use tpt_nova_ingest::decompose::ConvexPart;
+use tpt_nova_ingest::hull::convex_hull;
 use tpt_nova_ingest::Collider3D;
 
 use crate::{SplatCloud, SplatError};
@@ -25,31 +24,13 @@ pub fn build_convex_hull_collider(cloud: &SplatCloud) -> Result<Collider3D, Spla
     if cloud.is_empty() {
         return Err(SplatError::EmptyCloud);
     }
-    let points: Vec<Vector> = cloud
-        .splats
-        .iter()
-        .map(|s| Vector::new(s.position[0], s.position[1], s.position[2]))
-        .collect();
+    let points: Vec<[f32; 3]> = cloud.splats.iter().map(|s| s.position).collect();
 
-    // Returns the triangulated hull (`Vec<[u32; 3]>`), exactly what `ConvexPart`
-    // expects: the hull vertices and their triangle indices. `try_convex_hull`
-    // avoids panicking on degenerate input.
-    let (hull_pts, indices) = match try_convex_hull(&points) {
-        Ok(h) => h,
-        Err(_) => {
-            return Err(SplatError::MalformedSplat(
-                "splat cloud is degenerate (cannot form a 3D hull)".into(),
-            ))
-        }
-    };
-    if hull_pts.len() < 4 || indices.is_empty() {
-        return Err(SplatError::MalformedSplat(
-            "splat cloud is degenerate (cannot form a 3D hull)".into(),
-        ));
-    }
-
-    let vertices: Vec<[f32; 3]> = hull_pts.iter().map(|p| [p.x, p.y, p.z]).collect();
-    let part = ConvexPart { vertices, indices };
+    // `convex_hull` returns None on degenerate (coplanar / too few) input
+    // instead of panicking.
+    let part: ConvexPart = convex_hull(&points).ok_or_else(|| {
+        SplatError::MalformedSplat("splat cloud is degenerate (cannot form a 3D hull)".into())
+    })?;
     Ok(Collider3D::from_parts(vec![part]))
 }
 
