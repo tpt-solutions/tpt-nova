@@ -24,6 +24,21 @@ Part of [TPT Nova](../../README.md), the AI-native, ECS-based real-time engine.
 cargo test -p tpt-nova-app
 ```
 
+## Running in the browser
+
+The web build needs WebGPU (recent Chrome or Edge with GPU enabled). The
+`wasm-bindgen` CLI must be the same version as the `wasm-bindgen` crate in
+`Cargo.lock` (currently 0.2.130).
+
+```sh
+cargo build -p tpt-nova-app --target wasm32-unknown-unknown
+wasm-bindgen --target web --out-dir crates/tpt-nova-app/web target/wasm32-unknown-unknown/debug/tpt-nova-app.wasm
+python -m http.server 8080 --directory crates/tpt-nova-app/web
+```
+
+Then open http://localhost:8080. The page is `web/index.html`. The generated
+`tpt-nova-app.js` and `.wasm` files are build output and should not be committed.
+
 ## License
 
 Dual-licensed under either of [MIT](../../LICENSE-MIT) or [Apache-2.0](../../LICENSE-APACHE), at your option.

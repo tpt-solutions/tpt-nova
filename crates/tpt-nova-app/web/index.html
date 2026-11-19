@@ -1,0 +1,24 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TPT Nova — web</title>
+<style>
+  html, body { margin: 0; background: #111; color: #ddd; font: 14px system-ui, sans-serif; }
+  #status { padding: 8px 12px; }
+</style>
+<body>
+<div id="status">Loading TPT Nova…</div>
+<script type="module">
+  // Build the module first (see README), then serve this folder over HTTP.
+  // The generated files sit beside this page: tpt-nova-app.js and the .wasm.
+  import init from './tpt-nova-app.js';
+  const status = document.getElementById('status');
+  try {
+    await init();
+    status.textContent = 'Running. Check the console for errors.';
+  } catch (err) {
+    status.textContent = 'Failed to start: ' + err;
+    console.error(err);
+  }
+</script>
+</body>
