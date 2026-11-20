@@ -4,12 +4,15 @@
 //! pipeline. It reads entity transforms and camera state from the ECS each
 //! frame and draws them — the ECS stays free of all GPU types.
 
+#[cfg(feature = "neural")]
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use tpt_nova_ecs::transform::{Camera, GlobalTransform, Mesh, MeshKind};
 use tpt_nova_ecs::world::World;
-use tpt_nova_ecs::{Entity, Mat4};
+#[cfg(feature = "neural")]
+use tpt_nova_ecs::Entity;
+use tpt_nova_ecs::Mat4;
 use tpt_nova_ui::DrawList;
 use tpt_window::Window;
 use wgpu::util::DeviceExt;
@@ -22,14 +25,23 @@ use wgpu::util::DeviceExt;
 use tpt_nova_neural_materials::{MaterialBindings, NeuralMaterialRegistry, NeuralTexture};
 
 pub mod pbr;
+pub mod post;
 pub mod sprite;
 pub mod ui;
 pub use pbr::PbrRenderer;
+pub use post::{
+    BloomSettings, Effect as PostEffect, PostProcessChain, PostProcessPass, ToneMapping,
+};
 pub use sprite::{
     batch_sprites, collect_world_sprites, AtlasRegion, Sprite, SpriteRenderer, SpriteVertex,
     TextureAtlas,
 };
 pub use ui::{build_ui_vertices, UiOverlay};
+
+/// Re-export of the wgpu version this crate is built against, so downstream
+/// crates (scene graph, appfront hosts, PWA shells) use the same `Device`,
+/// `Queue`, and texture types without pinning their own wgpu.
+pub use wgpu;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]

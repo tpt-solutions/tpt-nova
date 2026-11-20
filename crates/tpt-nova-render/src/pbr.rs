@@ -66,6 +66,85 @@ impl Vertex {
     }
 }
 
+/// The per-frame scene inputs `PbrRenderer` reads out of the ECS.
+///
+/// This is the seam the high-level scene graph targets: bake a
+/// `tpt-nova-scene-graph::Scene` into a `World`, and this extraction yields the
+/// camera, the shadow-casting light, and every mesh model matrix the PBR pass
+/// draws. It is pure data (no GPU types), so it can be asserted in headless
+/// tests.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PbrScene {
+    pub camera_view_proj: Mat4,
+    pub camera_position: Vec3,
+    pub light_direction: Vec3,
+    pub light_color: Vec3,
+    pub light_intensity: f32,
+    pub light_view_proj: Mat4,
+    pub shadow_extent: f32,
+    /// Model matrices of every drawable mesh, in query order.
+    pub models: Vec<Mat4>,
+}
+
+impl PbrScene {
+    /// Extract the frame's camera, light, and mesh transforms from `world`.
+    pub fn collect(world: &World) -> Self {
+        let camera = world.resource::<ActiveCamera>();
+        let camera_view_proj = camera.map(|a| a.0.view_proj()).unwrap_or(Mat4::IDENTITY);
+        let camera_position = camera.map(|a| a.0.translation).unwrap_or(Vec3::ZERO);
+
+        // Pick the first light as the shadow-casting directional light.
+        let light_info = world
+            .query_2::<Light, GlobalTransform>()
+            .into_iter()
+            .next()
+            .map(|(_, light, gt)| {
+                let (_, rot, _) = gt.0.to_scale_rotation_translation();
+                let dir = light.direction(rot);
+                let extent = light.shadow_extent.max(0.5);
+                let eye = -dir * extent;
+                let view = Mat4::look_at_rh(eye, Vec3::ZERO, Vec3::Y);
+                let proj =
+                    Mat4::orthographic_rh(-extent, extent, -extent, extent, 0.1, extent * 2.0);
+                (light, dir, proj * view, extent)
+            });
+
+        let (light_direction, light_color, light_intensity, light_view_proj, shadow_extent) =
+            match light_info {
+                Some((l, d, vp, ext)) => (d, l.color, l.intensity, vp, ext),
+                None => (
+                    Vec3::new(0.4, -0.8, 0.3),
+                    Vec3::new(1.0, 1.0, 1.0),
+                    1.0,
+                    Mat4::IDENTITY,
+                    10.0,
+                ),
+            };
+
+        let models = world
+            .query_2::<Mesh, GlobalTransform>()
+            .into_iter()
+            .filter(|(_, _, gt)| gt.0 != Mat4::ZERO)
+            .map(|(_, _, gt)| gt.0)
+            .collect();
+
+        PbrScene {
+            camera_view_proj,
+            camera_position,
+            light_direction,
+            light_color,
+            light_intensity,
+            light_view_proj,
+            shadow_extent,
+            models,
+        }
+    }
+
+    pub fn mesh_count(&self) -> usize {
+        self.models.len()
+    }
+}
+
 /// A forward PBR renderer with one shadow-casting directional light.
 pub struct PbrRenderer {
     surface: wgpu::Surface<'static>,
@@ -383,42 +462,14 @@ impl PbrRenderer {
 
     /// Render the world with PBR shading and one shadow-casting light.
     pub fn render(&mut self, world: &World) -> anyhow::Result<()> {
-        // Resolve the active camera (or fall back to identity).
-        let camera_vp = world
-            .resource::<ActiveCamera>()
-            .map(|a| a.0.view_proj())
-            .unwrap_or(Mat4::IDENTITY);
-        let camera_pos = world
-            .resource::<ActiveCamera>()
-            .map(|a| a.0.translation)
-            .unwrap_or(Vec3::ZERO);
-
-        // Pick the first light as the shadow-casting directional light.
-        let light_info = world
-            .query_2::<Light, GlobalTransform>()
-            .into_iter()
-            .next()
-            .map(|(_, light, gt)| {
-                let (_, rot, _) = gt.0.to_scale_rotation_translation();
-                let dir = light.direction(rot);
-                let extent = light.shadow_extent.max(0.5);
-                let eye = -dir * extent;
-                let view = Mat4::look_at_rh(eye, Vec3::ZERO, Vec3::Y);
-                let proj =
-                    Mat4::orthographic_rh(-extent, extent, -extent, extent, 0.1, extent * 2.0);
-                (light, dir, proj * view, extent)
-            });
-
-        let (light_dir, light_color, light_intensity, light_vp, shadow_extent) = match light_info {
-            Some((l, d, vp, ext)) => (d, l.color, l.intensity, vp, ext),
-            None => (
-                Vec3::new(0.4, -0.8, 0.3),
-                Vec3::new(1.0, 1.0, 1.0),
-                1.0,
-                Mat4::IDENTITY,
-                10.0,
-            ),
-        };
+        let scene = PbrScene::collect(world);
+        let camera_vp = scene.camera_view_proj;
+        let camera_pos = scene.camera_position;
+        let light_dir = scene.light_direction;
+        let light_color = scene.light_color;
+        let light_intensity = scene.light_intensity;
+        let light_vp = scene.light_view_proj;
+        let shadow_extent = scene.shadow_extent;
 
         // --- Shadow pass: render scene depth from the light's POV ---------
         {
@@ -447,14 +498,11 @@ impl PbrRenderer {
             pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
 
-            for (_, _, gt) in world.query_2::<Mesh, GlobalTransform>() {
-                if gt.0 == Mat4::ZERO {
-                    continue;
-                }
+            for &model in &scene.models {
                 self.write_globals(
                     camera_vp,
                     light_vp,
-                    gt.0,
+                    model,
                     camera_pos,
                     light_dir,
                     light_color,
@@ -519,14 +567,11 @@ impl PbrRenderer {
             pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
 
-            for (_, _, gt) in world.query_2::<Mesh, GlobalTransform>() {
-                if gt.0 == Mat4::ZERO {
-                    continue;
-                }
+            for &model in &scene.models {
                 self.write_globals(
                     camera_vp,
                     light_vp,
-                    gt.0,
+                    model,
                     camera_pos,
                     light_dir,
                     light_color,
