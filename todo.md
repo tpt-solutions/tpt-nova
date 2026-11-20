@@ -408,24 +408,24 @@ Source: [spec2.txt](spec2.txt) (Draft v0.1.0). Crate boundary per spec §10. Not
 do not create the crate until Layer 1 is being implemented (CLAUDE.md: no speculative crates).
 
 ### Layer 1: Primitives & Core Traits
-- [ ] Define `Driver` trait and `DriverContext`
-- [ ] Implement `DriverId`, `DriverVersion`, `CapabilitySet`
-- [ ] Build `drivers-registry` with ArcSwap-based lookup (`(ComponentTypeId, DriverVersion) → DriverHandle`)
-- [ ] Unit tests for atomic hot-swap (next frame uses new driver; no frame drops)
+- [x] Define `Driver` trait and `DriverContext` — `tpt-nova-drivers` (`driver.rs`)
+- [x] Implement `DriverId`, `DriverVersion`, `CapabilitySet` — `tpt-nova-drivers` (`driver.rs`)
+- [x] Build `drivers-registry` with ArcSwap-based lookup (`(ComponentTypeId, DriverVersion) → DriverHandle`) — `DriverRegistry` (`registry.rs`), lock-free snapshot reads, serialized writes
+- [x] Unit tests for atomic hot-swap (next frame uses new driver; no frame drops) — incl. a concurrent-reader swap test
 
 ### Layer 2: Sandbox & Safety
 - [ ] Implement native driver loading via `libloading` (Linux-first `.so`; path handling via `std::path::Path`)
 - [ ] Implement WASM sandbox via `wasmtime` behind optional feature `wasm-sandbox`
-- [ ] Define capability token system (`ReadNeighbors`, `WritePhysics`, `EmitEvents`, …), granted/denied at load time
+- [x] Define capability token system (`ReadNeighbors`, `WritePhysics`, `EmitEvents`, …), granted/denied at load time — `CapabilitySet` + activation-time policy gate in `DriverRegistry` (`RegistryError::CapabilityDenied`); execution-time enforcement is still open (see the next item)
 - [ ] Fuzz test sandbox escape attempts
 - [ ] Enforce invariant: no driver executes outside its capability sandbox
 
 ### Layer 3: Migration & Versioning
-- [ ] Implement `migrate_from` trait method
-- [ ] Build migration chain composer (v1 → v2 → v3)
+- [x] Implement `migrate_from` trait method — `Driver::migrate_from` (default: no migration)
+- [x] Build migration chain composer (v1 → v2 → v3)
 - [ ] Implement shadow execution for A/B testing (subset of entities, compare before promotion)
-- [ ] Build rollback mechanism (one-call revert to any prior verified version)
-- [ ] Invariant: no schema migration without a registered migration path
+- [x] Build rollback mechanism (one-call revert to any prior verified version) — reverts to any previously *activated* version; "verified" awaits the Layer 4 verifier
+- [x] Invariant: no schema migration without a registered migration path
 
 ### Layer 4: AI & Self-Debugging
 - [ ] Integrate `tpt-anima` for anomaly observation
@@ -450,7 +450,7 @@ do not create the crate until Layer 1 is being implemented (CLAUDE.md: no specul
 - [x] Repo licensing: dual-licensed `MIT OR Apache-2.0` (see `LICENSE-MIT`, `LICENSE-APACHE`)
 
 ## Phase 8 open questions (from spec2.txt)
-- [ ] **Crate license:** spec §6 says `tpt-nova-drivers` is MIT-only, while the workspace is now MIT OR Apache-2.0. Decide whether the new crate sets `license = "MIT"` explicitly. Note that `wasmtime` (Apache-2.0) conflicts with the MIT-only policy and needs the optional-feature exception the spec describes.
+- [x] **Crate license:** resolved — `tpt-nova-drivers` sets `license = "MIT"` explicitly (spec §6); `arc-swap` is MIT OR Apache-2.0 so it passes `cargo deny`. Original question: spec §6 says `tpt-nova-drivers` is MIT-only, while the workspace is now MIT OR Apache-2.0. Decide whether the new crate sets `license = "MIT"` explicitly. Note that `wasmtime` (Apache-2.0) conflicts with the MIT-only policy and needs the optional-feature exception the spec describes.
 - [ ] **Driver inspector UI:** spec §8 names egui/iced. This conflicts with the Open Decisions resolution (bespoke `tpt-nova-ui` stack, no egui/iced). Confirm which applies before building the inspector.
 - [ ] **External repos:** `tpt-anima`, `tpt-telos`, `tpt-eve`, `tpt-crucible`, and `tpt-vectis` live outside this repo. Confirm whether they exist and what their interfaces are before Layer 4.
 
@@ -462,7 +462,7 @@ Current gaps: the renderer draws isotropic billboards (rotation/anisotropic scal
 - [x] `Splat::covariance3d()` CPU helper (R S Sᵀ Rᵀ) with unit tests (axis-aligned + rotated)
 - [x] Anisotropic splat shader: project 3D covariance to a 2D screen-space ellipse via the perspective Jacobian (+ low-pass), oriented quad, Gaussian alpha falloff in the fragment stage
 - [x] Move per-splat data to a storage buffer; vertex shader reads via a sorted index buffer
-- [ ] Depth sorting: CPU back-to-front sort on camera change, then GPU radix sort (compute) behind the same API — **CPU sort done** (per-chunk, re-sorted only when the view-projection changes; cross-chunk order by chunk center); **GPU radix sort not started**
+- [x] Depth sorting: CPU back-to-front sort on camera change, then GPU radix sort (compute) behind the same API — **CPU sort done** (per-chunk, re-sorted only when the view-projection changes); **GPU radix sort done** (`sort.rs`, opt-in `SplatSortMode::Gpu`; GPU tests pass on a real adapter)
 - [x] Blending: back-to-front premultiplied alpha, depth-write off, depth-test against the opaque scene
 - [x] Higher-order SH: loader reads `f_rest_*` (degrees 1-3); shader evaluates SH from view direction; `SplatQuality { sh_degree }` runtime cap (0 = current behavior)
 - [x] Pass camera view matrix alongside view_proj to `SplatPipeline::render` (keep `new`/`set_cloud` signatures stable) — `render` now takes a `SplatCamera { view, view_proj, viewport_px }`
@@ -485,8 +485,42 @@ Current gaps: the renderer draws isotropic billboards (rotation/anisotropic scal
 - [x] Edit ops: `select_in_aabb`, `select_in_screen_rect` (reuse `tpt-nova-overlay`), `delete`, `crop`, `transform` — `transform` is exact for non-uniform scale; SH coefficients are not rotated
 - [x] Splat telemetry summary (count, bounds, sh_degree, opacity histogram) via `tpt-nova-telemetry`
 - [x] Additive `AgentCommand` variants (`CropSplat`, `RegenerateSplatProxy`) in `tpt-nova-agent-api`; they go through the existing `MAX_COMMANDS_PER_POLL` path
-- [ ] Highlight & Fix: region selection over a splat entity yields a splat-subset selection in the AI fix prompt — **crate-level helpers done** (`select_in_screen_rect`, `SplatSelection::prompt_entry`); **not yet wired into the viewport's Highlight & Fix flow in `tpt-nova-app`**
+- [x] Highlight & Fix: region selection over a splat entity yields a splat-subset selection in the AI fix prompt — **done**: `App::splat_selection_notes` runs `select_in_screen_rect` over every `SplatCloud` in the viewport marquee and appends `SplatSelection::prompt_entry` lines (test `highlight_fix_prompt_includes_splat_subset_selection`)
 - [ ] (Stretch) Dynamic splats: per-splat bone weights bound to `tpt-nova-anim` skeletons — not started
 
 ### Housekeeping
 - [x] Update `tpt-nova-splat` README and the CLAUDE.md splat blurb once A/B land
+
+## Phase 10: 3D Scene Graph & Appfront Integration (from spec3.txt)
+Source: [spec3.txt](spec3.txt) (Draft). Proposes a new `tpt-nova-scene-graph` crate as the
+high-level, declarative 3D layer over `tpt-nova-render`. Not started — do not create the crate
+until Phase 10 Step 1 is being implemented (CLAUDE.md: no speculative crates).
+
+### Phase 1: Core Graph & Rendering
+- [x] Define `Scene`, `Node`, and transform hierarchy (position/rotation/scale) — `tpt-nova-scene-graph` (`scene.rs`, `node.rs`, `transform.rs`); fixed `add_child` listing children as roots
+- [x] Implement `Camera` (`PerspectiveCamera`) and `Light` (`DirectionalLight`, `PointLight`, `AmbientLight`) node types, with active-camera selection
+- [x] Wire `Scene` to drive `tpt-nova-render`'s existing PBR and sprite pipelines — `bake(&scene)` → `RenderPlan`; `RenderPlan::spawn_into(&mut World)` writes `Transform`/`GlobalTransform`/`Mesh`/`Sprite`/`Light`/`Camera` (+ `MainCamera`) components that the pipelines and `pick_main_camera` read
+- [ ] Standalone example (via `tpt-nova-editor` or a simple window) proving the graph renders correctly — **headless example done** (`examples/scene_bake.rs` bakes and spawns, no GPU); the on-screen render check is not done
+
+### Phase 2: "Stunning Defaults" & Post-Processing
+- [x] Implement the `PostProcessPipeline` orchestrator (toggleable effect stack) — scene-owned, serializable `PostProcessPipeline` lowers to `tpt-nova-render`'s `PostProcessChain`
+- [x] Add Bloom, Tone Mapping (ACES), and basic anti-aliasing passes to `tpt-nova-render` (if not already present) — `render/src/post.rs` (Bloom, ACES/Reinhard, FXAA); GPU tests pass
+- [x] Add a render-side API for registering custom full-screen post-processing passes (spec3 §4.2) — `PostProcessChain::add_custom_pass` / `PostProcessPass` trait
+- [ ] Tune default values for premium out-of-the-box visuals — defaults are set (bloom 0.8/0.6, ACES 1.0, FXAA on) but not yet tuned by eye against a rendered scene
+
+### Phase 3: Appfront Bridge
+- [ ] Add the `appfront` feature flag to `tpt-nova-scene-graph` (opt-in; core engine must not depend on appfront)
+- [ ] Implement `AppfrontSceneDelegate` against the `SceneDelegate` trait from `tpt-appfront-canvas-3d`
+- [ ] Handle pointer-event raycasting (2D screen coords → 3D world coords)
+- [ ] Test embedding the scene in a `tpt-appfront` UI running in `tpt-shell` and as a Wasm PWA
+
+### Phase 4: Polish & Ecosystem
+- [ ] Wasm/WebGPU compatibility for PWA deployments
+- [ ] Document the "How to embed 3D in your Rust UI" guide
+- [x] Verify `cargo-deny` compliance for all new dependencies — `cargo deny check licenses bans` passes (2026-11-21)
+
+### Open questions (from spec3.txt)
+- [ ] **Raycasting:** include a lightweight AABB raycaster in the scene graph for UI interaction, with complex collision queries delegated to `tpt-nova-physics`? (spec3 recommends yes)
+- [ ] **Animator:** add a high-level `Animator` wrapper over `tpt-nova-anim` in Phase 4, or leave animation driven manually? (spec3 recommends the wrapper)
+- [ ] **External repo:** `tpt-appfront-canvas-3d` (and `tpt-appfront` / `tpt-shell`) live outside this repo. Confirm they exist and their `SceneDelegate` interface before Phase 3.
+- [ ] **Backing store:** should the scene graph optionally be ECS-backed for large scenes (spec3 §7), defaulting to an in-memory graph?
