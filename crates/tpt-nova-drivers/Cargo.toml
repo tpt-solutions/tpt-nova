@@ -1,0 +1,18 @@
+[package]
+name = "tpt-nova-drivers"
+version.workspace = true
+edition.workspace = true
+# Spec §6 requires this crate to be MIT-only (see todo.md Phase 8 open questions).
+license = "MIT"
+repository.workspace = true
+description = "Hot-swappable behavior drivers for TPT Nova: driver trait, capability set, and an ArcSwap-based versioned registry"
+readme = "README.md"
+keywords = ["ecs", "hot-reload", "game-engine", "drivers"]
+categories = ["game-engines"]
+
+[dependencies]
+tpt-nova-ecs = { workspace = true }
+arc-swap = { workspace = true }
+thiserror = { workspace = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

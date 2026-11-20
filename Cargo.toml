@@ -24,6 +24,8 @@ members = [
     "crates/tpt-nova-overlay",
     "crates/tpt-nova-videocap",
     "crates/tpt-nova-sample-game",
+    "crates/tpt-nova-scene-graph",
+    "crates/tpt-nova-drivers",
     "crates/tpt-nova-xtask",
 ]
 
@@ -53,4 +55,8 @@ tpt-nova-export = { path = "crates/tpt-nova-export" }
 tpt-nova-agent-api = { path = "crates/tpt-nova-agent-api" }
 tpt-nova-overlay = { path = "crates/tpt-nova-overlay" }
 tpt-nova-videocap = { path = "crates/tpt-nova-videocap" }
+tpt-nova-scene-graph = { path = "crates/tpt-nova-scene-graph" }
+thiserror = "1"
+arc-swap = "1"
+tpt-nova-drivers = { path = "crates/tpt-nova-drivers" }
 tpt-nova-sample-game = { path = "crates/tpt-nova-sample-game" }

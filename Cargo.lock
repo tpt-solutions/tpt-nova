@@ -125,6 +125,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
 
 [[package]]
+name = "arc-swap"
+version = "1.9.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "84a22b5d51209f6de83d37a0b33d320acb8da88823e42a94c075140708f032a5"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "arrayvec"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3501,6 +3510,7 @@ dependencies = [
  "tpt-nova-overlay",
  "tpt-nova-render",
  "tpt-nova-scene",
+ "tpt-nova-splat",
  "tpt-nova-telemetry",
  "tpt-nova-ui",
  "tpt-window",
@@ -3518,6 +3528,17 @@ dependencies = [
  "rodio",
  "tpt-av-cadence-core",
  "tpt-av-cadence-flac",
+]
+
+[[package]]
+name = "tpt-nova-drivers"
+version = "0.1.0"
+dependencies = [
+ "arc-swap",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tpt-nova-ecs",
 ]
 
 [[package]]
@@ -3660,6 +3681,17 @@ dependencies = [
  "thiserror 2.0.18",
  "tpt-nova-ecs",
  "tpt-nova-physics",
+]
+
+[[package]]
+name = "tpt-nova-scene-graph"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "serde",
+ "thiserror 1.0.69",
+ "tpt-nova-ecs",
+ "tpt-nova-render",
 ]
 
 [[package]]
