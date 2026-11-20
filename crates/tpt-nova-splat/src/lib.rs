@@ -34,6 +34,8 @@ pub mod telemetry;
 
 #[cfg(feature = "render")]
 pub mod render;
+#[cfg(feature = "render")]
+pub mod sort;
 
 pub use collider::{attach_hull_collider, build_convex_hull_collider, hull_triangle_count};
 pub use compress::{encode_compressed_ply, load_compressed_ply_bytes};
@@ -41,6 +43,8 @@ pub use edit::{SplatSelection, SplatSummary};
 pub use loader::{load_file, load_ply_bytes, load_splat_bytes};
 pub use lod::{LodConfig, SplatChunk};
 pub use proxy::{attach_proxy_collider, build_proxy_collider, ProxyParams};
+#[cfg(feature = "render")]
+pub use render::{SplatCamera, SplatPipeline, SplatSortMode};
 pub use sh::SplatQuality;
 
 /// Errors raised while loading or processing a splat cloud.

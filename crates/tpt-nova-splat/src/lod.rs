@@ -209,6 +209,38 @@ impl Frustum {
     }
 }
 
+/// Visible, LOD-selected local indices for one chunk, **unsorted**.
+///
+/// This is the CPU half of the GPU sort path: the expensive part (per-splat
+/// frustum + LOD filtering) stays on the CPU, while the per-camera depth sort is
+/// left to [`crate::render::SplatPipeline`]'s GPU radix sort. The CPU path
+/// ([`visible_order`]) calls this and then sorts.
+///
+/// `chunk_centers` are the chunk's splat centers (local order), `global_indices`
+/// the matching cloud indices used for the deterministic keep test.
+pub fn visible_candidates(
+    chunk_centers: &[[f32; 3]],
+    global_indices: &[u32],
+    chunk_aabb: &Aabb,
+    cam_pos: Vec3,
+    frustum: &Frustum,
+    cfg: &LodConfig,
+) -> Vec<u32> {
+    if !frustum.intersects_aabb(chunk_aabb) {
+        return Vec::new();
+    }
+    let c = Vec3::from(chunk_aabb.center());
+    let distance = (c - cam_pos).length();
+    let ratio = cfg.ratio_for_distance(distance);
+    chunk_centers
+        .iter()
+        .zip(global_indices)
+        .enumerate()
+        .filter(|(_, (_, &global))| keep_splat(cfg.seed, global, ratio))
+        .map(|(local, _)| local as u32)
+        .collect()
+}
+
 /// Visible, LOD-selected local indices for one chunk, ordered back to front.
 ///
 /// `chunk_centers` are the chunk's splat centers (local order), `global_indices`
@@ -222,20 +254,22 @@ pub fn visible_order(
     frustum: &Frustum,
     cfg: &LodConfig,
 ) -> Vec<u32> {
-    if !frustum.intersects_aabb(chunk_aabb) {
-        return Vec::new();
-    }
-    let c = Vec3::from(chunk_aabb.center());
-    let distance = (c - cam_pos).length();
-    let ratio = cfg.ratio_for_distance(distance);
-    let mut keyed: Vec<(f32, u32)> = Vec::with_capacity(chunk_centers.len());
-    for (local, (center, &global)) in chunk_centers.iter().zip(global_indices).enumerate() {
-        if !keep_splat(cfg.seed, global, ratio) {
-            continue;
-        }
-        let v = view * Vec4::new(center[0], center[1], center[2], 1.0);
-        keyed.push((v.z, local as u32));
-    }
+    let candidates = visible_candidates(
+        chunk_centers,
+        global_indices,
+        chunk_aabb,
+        cam_pos,
+        frustum,
+        cfg,
+    );
+    let mut keyed: Vec<(f32, u32)> = candidates
+        .into_iter()
+        .map(|local| {
+            let center = chunk_centers[local as usize];
+            let v = view * Vec4::new(center[0], center[1], center[2], 1.0);
+            (v.z, local)
+        })
+        .collect();
     keyed.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
     keyed.into_iter().map(|(_, i)| i).collect()
 }
@@ -381,6 +415,27 @@ mod tests {
             max: [1.0, 1.0, 4.0],
         };
         assert!(visible_order(&centers, &globals, &behind, Vec3::ZERO, view, &f, &cfg).is_empty());
+    }
+
+    #[test]
+    fn visible_candidates_matches_visible_order_set() {
+        let view = Mat4::look_at_rh(Vec3::ZERO, Vec3::NEG_Z, Vec3::Y);
+        let proj = Mat4::perspective_rh(60f32.to_radians(), 1.0, 0.1, 100.0);
+        let f = Frustum::from_view_proj(proj * view);
+        let centers = [[0.0, 0.0, -2.0], [0.0, 0.0, -8.0], [0.0, 0.0, -5.0]];
+        let globals = [0u32, 1, 2];
+        let aabb = Aabb {
+            min: [-1.0, -1.0, -9.0],
+            max: [1.0, 1.0, -1.0],
+        };
+        let cfg = LodConfig::default();
+        let mut candidates = visible_candidates(&centers, &globals, &aabb, Vec3::ZERO, &f, &cfg);
+        let order = visible_order(&centers, &globals, &aabb, Vec3::ZERO, view, &f, &cfg);
+        candidates.sort_unstable();
+        let mut sorted_order = order.clone();
+        sorted_order.sort_unstable();
+        assert_eq!(candidates, sorted_order);
+        assert_eq!(order, vec![1, 2, 0]);
     }
 
     #[test]

@@ -22,11 +22,27 @@ use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
 use wgpu::{Device, Queue, RenderPipeline, TextureView};
 
-use crate::lod::{build_chunks, camera_position, visible_order, Frustum, LodConfig};
+use crate::lod::{
+    build_chunks, camera_position, visible_candidates, visible_order, Frustum, LodConfig,
+};
 use crate::sh::{SplatQuality, SH_FLOATS};
+use crate::sort::{ChunkSort, GpuSorter};
 use crate::{Aabb, SplatCloud};
 
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24Plus;
+
+/// Which depth-sort backend the splat pass uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SplatSortMode {
+    /// Sort each visible chunk on the CPU when the camera changes (the default;
+    /// works on any backend and keeps headless tests GPU-free).
+    #[default]
+    Cpu,
+    /// Sort each visible chunk with the GPU radix sort (`sort.rs`). The CPU still
+    /// does the per-splat frustum/LOD filtering; only the depth ordering moves to
+    /// the GPU.
+    Gpu,
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -57,6 +73,10 @@ struct SplatGpu {
 struct GpuChunk {
     bind_group: wgpu::BindGroup,
     order_buf: wgpu::Buffer,
+    /// Per-splat GPU data, also bound into the GPU depth sort's prepare pass.
+    splat_buf: wgpu::Buffer,
+    /// Lazily-created GPU depth-sort resources (only in [`SplatSortMode::Gpu`]).
+    sort: Option<ChunkSort>,
     /// Chunk-local splat centers, used for depth sorting.
     centers: Vec<[f32; 3]>,
     /// Global cloud indices, used for deterministic decimation.
@@ -88,8 +108,14 @@ pub struct SplatPipeline {
     chunks: Vec<GpuChunk>,
     cloud_degree: u8,
     lod: LodConfig,
+    /// Retained so chunk resources (and the lazy GPU sorter) can be created at
+    /// render time without threading a `Device` through every call.
+    device: Device,
+    sorter: Option<GpuSorter>,
     /// Runtime quality cap (SH degree). Defaults to the maximum.
     pub quality: SplatQuality,
+    /// Depth-sort backend. Defaults to [`SplatSortMode::Cpu`].
+    pub sort_mode: SplatSortMode,
 }
 
 impl SplatPipeline {
@@ -187,7 +213,10 @@ impl SplatPipeline {
             chunks: Vec::new(),
             cloud_degree: 0,
             lod: LodConfig::default(),
+            device: device.clone(),
+            sorter: None,
             quality: SplatQuality::default(),
+            sort_mode: SplatSortMode::default(),
         }
     }
 
@@ -236,7 +265,9 @@ impl SplatPipeline {
             let order_buf = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("splat-order"),
                 size: (n.max(1) * 4) as wgpu::BufferAddress,
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                usage: wgpu::BufferUsages::STORAGE
+                    | wgpu::BufferUsages::COPY_DST
+                    | wgpu::BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             });
             let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -264,6 +295,8 @@ impl SplatPipeline {
             self.chunks.push(GpuChunk {
                 bind_group,
                 order_buf,
+                splat_buf,
+                sort: None,
                 centers,
                 globals: chunk.indices,
                 aabb: chunk.aabb,
@@ -282,6 +315,17 @@ impl SplatPipeline {
     /// Set the runtime quality (SH cap).
     pub fn set_quality(&mut self, quality: SplatQuality) {
         self.quality = quality;
+    }
+
+    /// Choose the depth-sort backend. Switching modes re-sorts every visible
+    /// chunk on the next frame; chunk GPU data is unaffected.
+    pub fn set_sort_mode(&mut self, mode: SplatSortMode) {
+        if self.sort_mode != mode {
+            self.sort_mode = mode;
+            for chunk in &mut self.chunks {
+                chunk.cached_vp = None;
+            }
+        }
     }
 
     /// Record the splat pass into `encoder` for the given camera.
@@ -325,19 +369,58 @@ impl SplatPipeline {
             }
             let stale = chunk.cached_vp != Some(view_proj) || chunk.cached_degree != degree;
             if stale {
-                let order = visible_order(
-                    &chunk.centers,
-                    &chunk.globals,
-                    &chunk.aabb,
-                    cam,
-                    view,
-                    &frustum,
-                    &lod,
-                );
-                if !order.is_empty() {
-                    queue.write_buffer(&chunk.order_buf, 0, bytemuck::cast_slice(&order));
+                match self.sort_mode {
+                    SplatSortMode::Cpu => {
+                        let order = visible_order(
+                            &chunk.centers,
+                            &chunk.globals,
+                            &chunk.aabb,
+                            cam,
+                            view,
+                            &frustum,
+                            &lod,
+                        );
+                        if !order.is_empty() {
+                            queue.write_buffer(&chunk.order_buf, 0, bytemuck::cast_slice(&order));
+                        }
+                        chunk.visible = order.len() as u32;
+                    }
+                    SplatSortMode::Gpu => {
+                        // CPU filters (frustum + LOD), GPU orders by depth.
+                        let candidates = visible_candidates(
+                            &chunk.centers,
+                            &chunk.globals,
+                            &chunk.aabb,
+                            cam,
+                            &frustum,
+                            &lod,
+                        );
+                        let count = candidates.len() as u32;
+                        if count > 0 {
+                            queue.write_buffer(
+                                &chunk.order_buf,
+                                0,
+                                bytemuck::cast_slice(&candidates),
+                            );
+                        }
+                        let sorter = self
+                            .sorter
+                            .get_or_insert_with(|| GpuSorter::new(&self.device));
+                        if chunk.sort.is_none() {
+                            let sort = sorter.new_chunk(
+                                &self.device,
+                                &chunk.splat_buf,
+                                &chunk.order_buf,
+                                chunk.centers.len(),
+                            );
+                            chunk.sort = Some(sort);
+                        }
+                        if let Some(sort) = &chunk.sort {
+                            sorter.encode(queue, encoder, sort, view, count);
+                        }
+                        chunk.visible = count;
+                    }
                 }
-                chunk.visible = order.len() as u32;
                 chunk.cached_vp = Some(view_proj);
                 chunk.cached_degree = degree;
             }
@@ -739,5 +822,241 @@ mod gpu_tests {
             r > 200 && g < 60,
             "center pixel r={r} g={g}; expected red splat"
         );
+    }
+
+    /// Exercises the GPU radix sort: draws three splats at different depths and
+    /// checks the order buffer ends up back-to-front. Skips when no adapter.
+    #[test]
+    fn gpu_radix_sort_orders_splats_back_to_front() {
+        let Some((device, queue)) = try_device() else {
+            eprintln!("skipping splat GPU sort test: no adapter available");
+            return;
+        };
+        const W: u32 = 32;
+        const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+        let mut pipeline = SplatPipeline::new(&device, FORMAT);
+        // Three splats in one chunk: near (z = -2), far (z = -8), mid (z = -5).
+        let cloud = SplatCloud::new(vec![
+            Splat {
+                position: [0.0, 0.0, -2.0],
+                scale: [0.05; 3],
+                rotation: [1.0, 0.0, 0.0, 0.0],
+                color: [1.0, 0.0, 0.0, 1.0],
+                opacity: 1.0,
+            },
+            Splat {
+                position: [0.0, 0.0, -8.0],
+                scale: [0.05; 3],
+                rotation: [1.0, 0.0, 0.0, 0.0],
+                color: [0.0, 1.0, 0.0, 1.0],
+                opacity: 1.0,
+            },
+            Splat {
+                position: [0.0, 0.0, -5.0],
+                scale: [0.05; 3],
+                rotation: [1.0, 0.0, 0.0, 0.0],
+                color: [0.0, 0.0, 1.0, 1.0],
+                opacity: 1.0,
+            },
+        ]);
+        pipeline.set_cloud(&device, &queue, &cloud);
+        pipeline.set_sort_mode(SplatSortMode::Gpu);
+        assert_eq!(pipeline.chunk_count(), 1);
+
+        let color = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("splat-sort-test-color"),
+            size: wgpu::Extent3d {
+                width: W,
+                height: W,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let depth = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("splat-sort-test-depth"),
+            size: wgpu::Extent3d {
+                width: W,
+                height: W,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: DEPTH_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let color_view = color.create_view(&Default::default());
+        let depth_view = depth.create_view(&Default::default());
+
+        let view = Mat4::look_at_rh(Vec3::new(0.0, 0.0, 5.0), Vec3::ZERO, Vec3::Y);
+        let proj = Mat4::perspective_rh(60f32.to_radians(), 1.0, 0.1, 100.0);
+        let camera = SplatCamera {
+            view,
+            view_proj: proj * view,
+            viewport_px: [W as f32, W as f32],
+        };
+
+        // Expected order: sort local indices by ascending view-space z.
+        let centers: Vec<[f32; 3]> = pipeline.chunks[0].centers.clone();
+        let mut expected: Vec<u32> = (0..centers.len() as u32).collect();
+        expected.sort_by(|&a, &b| {
+            let za = (view * Vec3::from(centers[a as usize]).extend(1.0)).z;
+            let zb = (view * Vec3::from(centers[b as usize]).extend(1.0)).z;
+            za.total_cmp(&zb).then(a.cmp(&b))
+        });
+
+        let mut encoder = device.create_command_encoder(&Default::default());
+        pipeline.render(&queue, &mut encoder, &color_view, &depth_view, camera);
+
+        let order_buf = &pipeline.chunks[0].order_buf;
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("splat-sort-test-readback"),
+            size: (expected.len() * 4) as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        encoder.copy_buffer_to_buffer(
+            order_buf,
+            0,
+            &readback,
+            0,
+            (expected.len() * 4) as wgpu::BufferAddress,
+        );
+        queue.submit(Some(encoder.finish()));
+
+        let slice = readback.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |r| {
+            let _ = tx.send(r);
+        });
+        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+        rx.recv().unwrap().unwrap();
+        let data = slice.get_mapped_range().unwrap();
+        let order: Vec<u32> = data
+            .chunks_exact(4)
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+            .collect();
+        drop(data);
+        readback.unmap();
+
+        assert_eq!(
+            order, expected,
+            "GPU radix sort must order splats back-to-front"
+        );
+    }
+
+    /// A cloud larger than one 256-element segment: exercises the shader's
+    /// multi-segment stable scatter and checks the result is a full permutation
+    /// in back-to-front order.
+    #[test]
+    fn gpu_radix_sort_handles_multiple_segments() {
+        let Some((device, queue)) = try_device() else {
+            eprintln!("skipping splat GPU sort test: no adapter available");
+            return;
+        };
+        const N: usize = 700;
+        const W: u32 = 16;
+        const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+        let mut pipeline = SplatPipeline::new(&device, FORMAT);
+        // Deterministic, unique depths; chunk-local order is Morton order, so the
+        // expected order is derived from the actual centers below.
+        let splats: Vec<Splat> = (0..N)
+            .map(|i| {
+                let z = -(1.0 + i as f32 * 0.05);
+                let a = i as f32 * 0.7;
+                Splat {
+                    position: [a.sin() * 0.1, a.cos() * 0.1, z],
+                    scale: [0.01; 3],
+                    rotation: [1.0, 0.0, 0.0, 0.0],
+                    color: [1.0; 4],
+                    opacity: 1.0,
+                }
+            })
+            .collect();
+        pipeline.set_cloud(&device, &queue, &SplatCloud::new(splats));
+        pipeline.set_sort_mode(SplatSortMode::Gpu);
+        assert_eq!(pipeline.chunk_count(), 1);
+        assert_eq!(pipeline.chunks[0].centers.len(), N);
+
+        let color = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("splat-sort-multi-color"),
+            size: wgpu::Extent3d {
+                width: W,
+                height: W,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let depth = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("splat-sort-multi-depth"),
+            size: wgpu::Extent3d {
+                width: W,
+                height: W,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: DEPTH_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let color_view = color.create_view(&Default::default());
+        let depth_view = depth.create_view(&Default::default());
+        let view = Mat4::IDENTITY;
+        let proj = Mat4::perspective_rh(60f32.to_radians(), 1.0, 0.1, 200.0);
+        let camera = SplatCamera {
+            view,
+            view_proj: proj,
+            viewport_px: [W as f32, W as f32],
+        };
+
+        let centers = pipeline.chunks[0].centers.clone();
+        let mut expected: Vec<u32> = (0..N as u32).collect();
+        expected.sort_by(|&a, &b| {
+            let za = centers[a as usize][2];
+            let zb = centers[b as usize][2];
+            za.total_cmp(&zb).then(a.cmp(&b))
+        });
+
+        let mut encoder = device.create_command_encoder(&Default::default());
+        pipeline.render(&queue, &mut encoder, &color_view, &depth_view, camera);
+        let order_buf = &pipeline.chunks[0].order_buf;
+        let readback = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("splat-sort-multi-readback"),
+            size: (N * 4) as wgpu::BufferAddress,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        encoder.copy_buffer_to_buffer(order_buf, 0, &readback, 0, (N * 4) as wgpu::BufferAddress);
+        queue.submit(Some(encoder.finish()));
+
+        let slice = readback.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |r| {
+            let _ = tx.send(r);
+        });
+        let _ = device.poll(wgpu::PollType::wait_indefinitely());
+        rx.recv().unwrap().unwrap();
+        let data = slice.get_mapped_range().unwrap();
+        let order: Vec<u32> = data
+            .chunks_exact(4)
+            .map(|b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+            .collect();
+        drop(data);
+        readback.unmap();
+
+        assert_eq!(order, expected, "multi-segment GPU radix sort mismatch");
     }
 }
