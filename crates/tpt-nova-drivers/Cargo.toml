@@ -16,3 +16,21 @@ arc-swap = { workspace = true }
 thiserror = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+# Layer 2 WebAssembly sandbox: runs `.wasm` drivers on TPT-Wasm
+# (github.com/tpt-solutions/tpt-wasm). Off by default so headless builds stay lean.
+# The facade `tpt-wasm` supplies the engine; the sibling crates supply the
+# host-function trait and value/import types the facade does not re-export.
+tpt-wasm = { git = "https://github.com/tpt-solutions/tpt-wasm", optional = true }
+tpt-wasm-runtime = { git = "https://github.com/tpt-solutions/tpt-wasm", optional = true }
+tpt-wasm-types = { git = "https://github.com/tpt-solutions/tpt-wasm", optional = true }
+tpt-wasm-format = { git = "https://github.com/tpt-solutions/tpt-wasm", optional = true }
+
+[features]
+default = []
+wasm-sandbox = [
+    "dep:tpt-wasm",
+    "dep:tpt-wasm-runtime",
+    "dep:tpt-wasm-types",
+    "dep:tpt-wasm-format",
+]

@@ -20,6 +20,8 @@
 pub mod driver;
 pub mod migrate;
 pub mod registry;
+#[cfg(feature = "wasm-sandbox")]
+pub mod sandbox;
 
 pub use driver::{
     Capability, CapabilitySet, Driver, DriverContext, DriverError, DriverId, DriverVersion,

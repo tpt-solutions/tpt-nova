@@ -218,6 +218,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "block-buffer"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d2f6c7dbe95a6ed67ad9f18e57daf93a2f034c524b99fd2b76d18fdfeb6660aa"
+dependencies = [
+ "hybrid-array",
+]
+
+[[package]]
 name = "block2"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -325,6 +334,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
+name = "cmov"
+version = "0.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
+
+[[package]]
 name = "codespan-reporting"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -372,6 +387,12 @@ dependencies = [
  "unicode-width",
  "windows-sys 0.59.0",
 ]
+
+[[package]]
+name = "const-oid"
+version = "0.10.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "be95d4a884358a21a199689323c29e9256b4a1b315e22f183d155422041d3a9a"
 
 [[package]]
 name = "const-random"
@@ -473,6 +494,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cpufeatures"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5ca28b0ae3115b884660db4118d803791fd6756b6e88f39c0f3f7859060d7566"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "crc32fast"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -520,6 +550,24 @@ checksum = "78c8292055d1c1df0cce5d180393dc8cce0abec0a7102adb6c7b1eef6016d60a"
 dependencies = [
  "generic-array",
  "typenum",
+]
+
+[[package]]
+name = "crypto-common"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ce6e4c961d6cd6c9a86db418387425e8bdeaf05b3c8bc1411e6dca4c252f1453"
+dependencies = [
+ "hybrid-array",
+]
+
+[[package]]
+name = "ctutils"
+version = "0.4.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "261af4dc7a06ea8a527a8717d8cbba3417530d6ea14e1edb3de6b67806be474f"
+dependencies = [
+ "cmov",
 ]
 
 [[package]]
@@ -637,8 +685,20 @@ version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
 dependencies = [
- "block-buffer",
- "crypto-common",
+ "block-buffer 0.10.4",
+ "crypto-common 0.1.7",
+]
+
+[[package]]
+name = "digest"
+version = "0.11.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f1dd6dbb5841937940781866fa1281a1ff7bd3bf827091440879f9994983d5c2"
+dependencies = [
+ "block-buffer 0.12.1",
+ "const-oid",
+ "crypto-common 0.2.2",
+ "ctutils",
 ]
 
 [[package]]
@@ -1128,6 +1188,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "hmac"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6303bc9732ae41b04cb554b844a762b4115a61bfaa81e3e83050991eeb56863f"
+dependencies = [
+ "digest 0.11.3",
+]
+
+[[package]]
 name = "http"
 version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1165,6 +1234,15 @@ name = "httparse"
 version = "1.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
+
+[[package]]
+name = "hybrid-array"
+version = "0.4.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "27f864f10dfb56725ce5ce5472bc52252c8f93a4ab86327122cebf62c5f59a17"
+dependencies = [
+ "typenum",
+]
 
 [[package]]
 name = "hyper"
@@ -2307,7 +2385,7 @@ checksum = "0f2f6427193c808010b126bef45ebd33f8dee43770223a1200f84d3734d6c656"
 dependencies = [
  "flate2",
  "pkg-config",
- "sha2",
+ "sha2 0.10.9",
  "tar",
  "ureq",
 ]
@@ -2961,8 +3039,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283"
 dependencies = [
  "cfg-if",
- "cpufeatures",
- "digest",
+ "cpufeatures 0.2.17",
+ "digest 0.10.7",
+]
+
+[[package]]
+name = "sha2"
+version = "0.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47d7069beb7d6ac7b9acd1039986e73443f24234f41074da099d6f994ac9ad19"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.3.1",
+ "digest 0.11.3",
 ]
 
 [[package]]
@@ -3539,6 +3628,10 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
  "tpt-nova-ecs",
+ "tpt-wasm",
+ "tpt-wasm-format",
+ "tpt-wasm-runtime",
+ "tpt-wasm-types",
 ]
 
 [[package]]
@@ -3766,6 +3859,172 @@ dependencies = [
 [[package]]
 name = "tpt-nova-xtask"
 version = "0.1.0"
+
+[[package]]
+name = "tpt-wasm"
+version = "0.1.0"
+source = "git+https://github.com/tpt-solutions/tpt-wasm#608b84ab7685a7676a7372c655a00e0e7e0b6a12"
+dependencies = [
+ "tpt-wasm-capability",
+ "tpt-wasm-decode",
+ "tpt-wasm-host",
+ "tpt-wasm-resource",
+ "tpt-wasm-runtime",
+ "tpt-wasm-types",
+ "tpt-wasm-validate",
+ "tpt-wasm-wasi",
+]
+
+[[package]]
+name = "tpt-wasm-aot"
+version = "0.1.0"
+source = "git+https://github.com/tpt-solutions/tpt-wasm#608b84ab7685a7676a7372c655a00e0e7e0b6a12"
+dependencies = [
+ "hmac",
+ "sha2 0.11.1",
+ "tpt-wasm-codegen",
+ "tpt-wasm-ir",
+ "tpt-wasm-jit",
+ "tpt-wasm-opt",
+ "tpt-wasm-types",
+]
+
+[[package]]
+name = "tpt-wasm-capability"
+version = "0.1.0"
+source = "git+https://github.com/tpt-solutions/tpt-wasm#608b84ab7685a7676a7372c655a00e0e7e0b6a12"
+dependencies = [
+ "tpt-wasm-types",
+]
+
+[[package]]
+name = "tpt-wasm-codegen"
+version = "0.1.0"
+source = "git+https://github.com/tpt-solutions/tpt-wasm#608b84ab7685a7676a7372c655a00e0e7e0b6a12"
+dependencies = [
+ "tpt-wasm-ir",
+ "tpt-wasm-types",
+]
+
+[[package]]
+name = "tpt-wasm-decode"
+version = "0.1.0"
+source = "git+https://github.com/tpt-solutions/tpt-wasm#608b84ab7685a7676a7372c655a00e0e7e0b6a12"
+dependencies = [
+ "tpt-wasm-format",
+ "tpt-wasm-types",
+]
+
+[[package]]
+name = "tpt-wasm-format"
+version = "0.1.0"
+source = "git+https://github.com/tpt-solutions/tpt-wasm#608b84ab7685a7676a7372c655a00e0e7e0b6a12"
+dependencies = [
+ "tpt-wasm-types",
+]
+
+[[package]]
+name = "tpt-wasm-host"
+version = "0.1.0"
+source = "git+https://github.com/tpt-solutions/tpt-wasm#608b84ab7685a7676a7372c655a00e0e7e0b6a12"
+dependencies = [
+ "tpt-wasm-capability",
+ "tpt-wasm-resource",
+ "tpt-wasm-runtime",
+ "tpt-wasm-types",
+]
+
+[[package]]
+name = "tpt-wasm-ir"
+version = "0.1.0"
+source = "git+https://github.com/tpt-solutions/tpt-wasm#608b84ab7685a7676a7372c655a00e0e7e0b6a12"
+dependencies = [
+ "tpt-wasm-format",
+ "tpt-wasm-types",
+ "tpt-wasm-validate",
+]
+
+[[package]]
+name = "tpt-wasm-jit"
+version = "0.1.0"
+source = "git+https://github.com/tpt-solutions/tpt-wasm#608b84ab7685a7676a7372c655a00e0e7e0b6a12"
+dependencies = [
+ "tpt-wasm-codegen",
+ "tpt-wasm-ir",
+ "tpt-wasm-opt",
+ "tpt-wasm-types",
+]
+
+[[package]]
+name = "tpt-wasm-micro"
+version = "0.1.0"
+source = "git+https://github.com/tpt-solutions/tpt-wasm#608b84ab7685a7676a7372c655a00e0e7e0b6a12"
+dependencies = [
+ "tpt-wasm-types",
+ "tpt-wasm-validate",
+]
+
+[[package]]
+name = "tpt-wasm-opt"
+version = "0.1.0"
+source = "git+https://github.com/tpt-solutions/tpt-wasm#608b84ab7685a7676a7372c655a00e0e7e0b6a12"
+dependencies = [
+ "tpt-wasm-ir",
+ "tpt-wasm-types",
+]
+
+[[package]]
+name = "tpt-wasm-resource"
+version = "0.1.0"
+source = "git+https://github.com/tpt-solutions/tpt-wasm#608b84ab7685a7676a7372c655a00e0e7e0b6a12"
+dependencies = [
+ "tpt-wasm-types",
+]
+
+[[package]]
+name = "tpt-wasm-runtime"
+version = "0.1.0"
+source = "git+https://github.com/tpt-solutions/tpt-wasm#608b84ab7685a7676a7372c655a00e0e7e0b6a12"
+dependencies = [
+ "sha2 0.11.1",
+ "tpt-wasm-aot",
+ "tpt-wasm-capability",
+ "tpt-wasm-codegen",
+ "tpt-wasm-decode",
+ "tpt-wasm-format",
+ "tpt-wasm-ir",
+ "tpt-wasm-jit",
+ "tpt-wasm-micro",
+ "tpt-wasm-opt",
+ "tpt-wasm-types",
+ "tpt-wasm-validate",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "tpt-wasm-types"
+version = "0.1.0"
+source = "git+https://github.com/tpt-solutions/tpt-wasm#608b84ab7685a7676a7372c655a00e0e7e0b6a12"
+
+[[package]]
+name = "tpt-wasm-validate"
+version = "0.1.0"
+source = "git+https://github.com/tpt-solutions/tpt-wasm#608b84ab7685a7676a7372c655a00e0e7e0b6a12"
+dependencies = [
+ "tpt-wasm-format",
+ "tpt-wasm-types",
+]
+
+[[package]]
+name = "tpt-wasm-wasi"
+version = "0.1.0"
+source = "git+https://github.com/tpt-solutions/tpt-wasm#608b84ab7685a7676a7372c655a00e0e7e0b6a12"
+dependencies = [
+ "tpt-wasm-capability",
+ "tpt-wasm-host",
+ "tpt-wasm-runtime",
+ "tpt-wasm-types",
+]
 
 [[package]]
 name = "tpt-window"

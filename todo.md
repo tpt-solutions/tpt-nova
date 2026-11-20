@@ -415,10 +415,10 @@ do not create the crate until Layer 1 is being implemented (CLAUDE.md: no specul
 
 ### Layer 2: Sandbox & Safety
 - [ ] Implement native driver loading via `libloading` (Linux-first `.so`; path handling via `std::path::Path`)
-- [ ] Implement WASM sandbox via `wasmtime` behind optional feature `wasm-sandbox`
+- [x] Implement WASM sandbox on `tpt-wasm` (the user's own MIT OR Apache-2.0 runtime, used in place of `wasmtime`) behind optional feature `wasm-sandbox` — `crates/tpt-nova-drivers/src/sandbox.rs`: load-time gate (module must import only `tpt_nova` functions whose capability is granted and bound), per-import least-privilege binding, `max_execution_steps` budget per update, and activation through `DriverRegistry` under policy; 26 tests pass with the feature on. Host bindings exist for `read_dt` and `emit_event` only; `write_transform`, `read_neighbors` and `write_physics` are refused until bound
 - [x] Define capability token system (`ReadNeighbors`, `WritePhysics`, `EmitEvents`, …), granted/denied at load time — `CapabilitySet` + activation-time policy gate in `DriverRegistry` (`RegistryError::CapabilityDenied`); execution-time enforcement is still open (see the next item)
 - [ ] Fuzz test sandbox escape attempts
-- [ ] Enforce invariant: no driver executes outside its capability sandbox
+- [ ] Enforce invariant: no driver executes outside its capability sandbox — partial: WASM drivers can only call the host imports bound to their granted capabilities; the native `.so` loader does not exist yet, and execution-time checks for native drivers are still open
 
 ### Layer 3: Migration & Versioning
 - [x] Implement `migrate_from` trait method — `Driver::migrate_from` (default: no migration)
@@ -450,7 +450,7 @@ do not create the crate until Layer 1 is being implemented (CLAUDE.md: no specul
 - [x] Repo licensing: dual-licensed `MIT OR Apache-2.0` (see `LICENSE-MIT`, `LICENSE-APACHE`)
 
 ## Phase 8 open questions (from spec2.txt)
-- [x] **Crate license:** resolved — `tpt-nova-drivers` sets `license = "MIT"` explicitly (spec §6); `arc-swap` is MIT OR Apache-2.0 so it passes `cargo deny`. Original question: spec §6 says `tpt-nova-drivers` is MIT-only, while the workspace is now MIT OR Apache-2.0. Decide whether the new crate sets `license = "MIT"` explicitly. Note that `wasmtime` (Apache-2.0) conflicts with the MIT-only policy and needs the optional-feature exception the spec describes.
+- [x] **Crate license:** resolved — `tpt-nova-drivers` sets `license = "MIT"` explicitly (spec §6); `arc-swap` is MIT OR Apache-2.0 so it passes `cargo deny`. Original question: spec §6 says `tpt-nova-drivers` is MIT-only, while the workspace is now MIT OR Apache-2.0. Decide whether the new crate sets `license = "MIT"` explicitly. Resolved for the WASM runtime: the sandbox uses `tpt-wasm` (MIT OR Apache-2.0, same owner) instead of `wasmtime`, so no exception is needed. `tpt-wasm` and `tpt-window` are added to `deny.toml` `allow-git`.
 - [ ] **Driver inspector UI:** spec §8 names egui/iced. This conflicts with the Open Decisions resolution (bespoke `tpt-nova-ui` stack, no egui/iced). Confirm which applies before building the inspector.
 - [ ] **External repos:** `tpt-anima`, `tpt-telos`, `tpt-eve`, `tpt-crucible`, and `tpt-vectis` live outside this repo. Confirm whether they exist and what their interfaces are before Layer 4.
 
