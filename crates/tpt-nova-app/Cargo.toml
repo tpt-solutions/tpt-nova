@@ -23,6 +23,7 @@ tpt-nova-editor = { path = "../tpt-nova-editor" }
 tpt-nova-overlay = { path = "../tpt-nova-overlay" }
 tpt-nova-neural-materials = { path = "../tpt-nova-neural-materials" }
 tpt-nova-scene = { path = "../tpt-nova-scene" }
+tpt-nova-splat = { workspace = true }
 
 tpt-window = { git = "https://github.com/tpt-solutions/tpt-window" }
 glam = "0.29"

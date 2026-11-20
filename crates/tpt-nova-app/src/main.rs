@@ -32,8 +32,9 @@ use tpt_nova_editor::{
 use tpt_nova_input::{default_action_map, ActionMap, InputState};
 use tpt_nova_neural_materials::prompt::{FeedSource, MaterialPrompt};
 use tpt_nova_neural_materials::{MaterialBindings, NeuralMaterialRegistry};
-use tpt_nova_overlay::{project_to_screen, SelectionTool};
+use tpt_nova_overlay::{project_to_screen, ScreenRect, SelectionTool};
 use tpt_nova_render::Renderer;
+use tpt_nova_splat::{Splat, SplatCloud};
 use tpt_nova_telemetry::{FileSink, TelemetryEmitter};
 use tpt_nova_ui::{Color, DrawCommand, DrawList, Rect, Ui, UiInput};
 use tpt_window::{
@@ -73,6 +74,30 @@ struct RotationXYZ {
     x: f32,
     y: f32,
     z: f32,
+}
+
+/// A deterministic 4×4×4 demo Gaussian cloud centered on the origin.
+///
+/// Small enough to stay in memory and project into the viewport's default
+/// framing, while still having many splats so a marquee selects a *subset*
+/// rather than all-or-nothing.
+fn demo_splat_cloud() -> SplatCloud {
+    let mut splats = Vec::with_capacity(64);
+    for x in 0..4 {
+        for y in 0..4 {
+            for z in 0..4 {
+                let p = |v: u32| (v as f32 - 1.5) * 0.22;
+                splats.push(Splat {
+                    position: [p(x), p(y), p(z)],
+                    scale: [0.06; 3],
+                    rotation: [1.0, 0.0, 0.0, 0.0],
+                    color: [0.9, 0.55, 0.35, 1.0],
+                    opacity: 0.85,
+                });
+            }
+        }
+    }
+    SplatCloud::new(splats)
 }
 
 /// Panel layout (in window pixels) for the editor chrome. Pure so it can be
@@ -220,6 +245,14 @@ impl App {
         );
         world.add_component(camera, Camera::default());
         world.add_component(camera, GlobalTransform::identity());
+
+        // Splat entity: one ECS entity holding a whole Gaussian cloud. It exists
+        // so the viewport's Highlight & Fix marquee can produce a *splat-subset*
+        // selection (data-level, not just the entity) in the agent prompt.
+        let splat = world.spawn();
+        world.add_component(splat, Transform::default());
+        world.add_component(splat, GlobalTransform::identity());
+        world.add_component(splat, demo_splat_cloud());
 
         // Resources.
         world.add_resource(InputState::default());
@@ -369,6 +402,26 @@ impl App {
                 let forward = gt.0.transform_vector3(Vec3::NEG_Z).normalize();
                 (vp, vp.inverse(), forward)
             })
+    }
+
+    /// Prompt lines describing the splat subset inside a Highlight & Fix marquee.
+    ///
+    /// A splat cloud is a single ECS entity made of thousands of Gaussians, so the
+    /// entity-level pick (`tpt-nova-overlay`) is not actionable on its own. This
+    /// runs the crate-level screen-rect selection over every [`SplatCloud`] and
+    /// returns a compact index-range description (via
+    /// `SplatSelection::prompt_entry`) that the agent can act on — e.g. "crop /
+    /// clean these splats" — which is what closes the splat-aware Highlight & Fix
+    /// loop in the viewport.
+    fn splat_selection_notes(&self, view_proj: Mat4, region: ScreenRect) -> Vec<String> {
+        let mut notes = Vec::new();
+        for (entity, cloud, gt) in self.world.query_2::<SplatCloud, GlobalTransform>() {
+            let sel = cloud.select_in_screen_rect(gt.0, view_proj, self.viewport_size, region);
+            if !sel.is_empty() {
+                notes.push(sel.prompt_entry(&entity.to_string()));
+            }
+        }
+        notes
     }
 
     /// Pick the entity whose projected center is nearest the window pointer
@@ -980,13 +1033,28 @@ impl App {
         if self.tool == ViewportTool::Highlight {
             let (x, y) = (self.pointer.x as u32, self.pointer.y as u32);
             self.overlay.drag(x, y);
+            // Capture the marquee before `build_request` consumes the drag.
+            let region = self.overlay.current_rect(self.viewport_size);
             if let Some((vp, _, _)) = self.camera_matrices() {
-                if let Ok(req) = self.overlay.build_request(
+                if let Ok(mut req) = self.overlay.build_request(
                     &self.world,
                     vp,
                     self.viewport_size,
                     &self.fix_instruction,
                 ) {
+                    // Splat clouds are single entities holding many Gaussians: add
+                    // the selected splat-subset ranges so the fix prompt is
+                    // actionable at the data level, not just the entity level.
+                    if let Some(region) = region {
+                        let notes = self.splat_selection_notes(vp, region);
+                        if !notes.is_empty() {
+                            req.prompt.push_str("\nSplat selections:");
+                            for note in notes {
+                                req.prompt.push_str("\n  - ");
+                                req.prompt.push_str(&note);
+                            }
+                        }
+                    }
                     let tick = self
                         .world
                         .resource::<TickResource>()
@@ -1429,11 +1497,13 @@ mod tests {
         // initializes the renderer, so it is safe under CI with no display.
         let app = App::new(0xCAFE);
 
-        assert_eq!(app.world.entity_count(), 2);
+        assert_eq!(app.world.entity_count(), 3);
         assert!(app.world.has_component::<Transform>(app.cube));
         assert!(app.world.has_component::<Mesh>(app.cube));
         assert!(app.world.has_component::<Camera>(app.camera));
         assert!(app.world.has_component::<GlobalTransform>(app.cube));
+        // The demo splat cloud entity is present for splat-aware Highlight & Fix.
+        assert_eq!(app.world.query_1::<SplatCloud>().len(), 1);
 
         // Resources the systems rely on must be present.
         assert!(app.world.has_resource::<InputState>());
@@ -1777,6 +1847,8 @@ mod tests {
     fn highlight_flow(app: &mut App) {
         app.tool = ViewportTool::Highlight;
         app.viewport_size = (1280, 720);
+        // Resolve camera/entity world transforms as the running scheduler would.
+        tpt_nova_ecs::scene_graph::propagate_transforms(&mut app.world);
         app.pointer = Vec2::new(640.0, 360.0);
         app.on_pointer_press(); // begin the marquee at the cube's projected center
         app.pointer = Vec2::new(740.0, 420.0);
@@ -1826,6 +1898,19 @@ mod tests {
             .as_deref()
             .unwrap()
             .contains("FIX REQUEST"));
+    }
+
+    #[test]
+    fn highlight_fix_prompt_includes_splat_subset_selection() {
+        // A marquee over the demo splat cloud must contribute the selected
+        // Gaussian ranges to the fix prompt, not just the entity id.
+        let mut app = App::new(0x5A17);
+        app.propose_mode = false;
+        highlight_flow(&mut app);
+        let prompt = &app.last_fix.as_ref().expect("fix request").prompt;
+        assert!(prompt.contains("Splat selections:"), "prompt: {prompt}");
+        assert!(prompt.contains("splat entity"), "prompt: {prompt}");
+        assert!(prompt.contains("splats in"), "prompt: {prompt}");
     }
 
     #[test]
