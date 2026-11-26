@@ -39,7 +39,7 @@ pub struct IngestResult {
     pub bounds: Aabb,
 }
 
-/// Run the full ingestion pipeline on a mesh file: load, V-HACD decompose, and
+/// Run the full ingestion pipeline on a mesh file: load, convex-decompose, and
 /// auto-rig from the combined bounds.
 pub fn ingest(path: &Path) -> Result<IngestResult, IngestError> {
     let meshes = load(path)?;
@@ -99,7 +99,7 @@ mod tests {
         let parts = decompose_convex(&cube_mesh(), None).unwrap();
         assert!(
             !parts.is_empty(),
-            "VHACD should return at least one convex part for a cube"
+            "decomposition should return at least one convex part for a cube"
         );
     }
 

@@ -1,7 +1,7 @@
 //! Smart mesh ingestion demo: "drag a .glb in, get a collider + rig".
 //!
 //! Runs the full ingestion pipeline on a mesh file passed on the command line,
-//! spawns an ECS entity with the auto-generated Rapier3D collider and a rigid
+//! spawns an ECS entity with the auto-generated collider and a rigid
 //! body, drops it onto a fixed ground plane, and prints a short report proving
 //! the collider and auto-rig were produced and are simulated.
 //!

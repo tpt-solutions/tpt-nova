@@ -1,7 +1,7 @@
 //! An end-to-end sample game that exercises the **entire** TPT Nova pipeline.
 //!
 //! This is the proof point for the Alpha: a playable-shaped world assembled from
-//! every subsystem — ECS entities, Rapier3D physics, scene save/load, the
+//! every subsystem — ECS entities, 3D physics, scene save/load, the
 //! external agent control API, Gaussian Splat ingestion, and standalone
 //! packaging. Everything here runs headless (no window/GPU) so the same code
 //! path is exercised by both the shipped demo and the test suite.

@@ -9,7 +9,7 @@
 //!   chunked `.compressed.ply` layout (see [`compress`]),
 //! * exposes the cloud as an ECS [`SplatCloud`] component,
 //! * derives collision proxies: a single [`build_convex_hull_collider`] or a
-//!   multi-part VHACD proxy from [`proxy`],
+//!   multi-part convex-decomposition proxy from [`proxy`],
 //! * edits clouds in place ([`edit`]): AABB / screen-rect selection, delete,
 //!   crop and affine transform,
 //! * and (behind the `render` feature) provides a wgpu [`SplatPipeline`] that

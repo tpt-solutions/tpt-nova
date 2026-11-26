@@ -10,8 +10,8 @@
 //! pipeline. The solver (see [`crate::solver3d`]) treats them as a compound of
 //! convex hulls, so a concave ingested mesh still collides correctly.
 //!
-//! The solver is in-house, replacing Rapier3D so the workspace stays free of
-//! Apache-2.0-only dependencies.
+//! The solver is in-house, so the workspace stays free of Apache-2.0-only
+//! dependencies.
 
 use std::collections::{HashMap, HashSet};
 

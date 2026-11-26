@@ -2,7 +2,7 @@
 //!
 //! These are plain, serializable data components. They describe *intent*
 //! (a body is dynamic, a collider is a 0.5-radius ball, etc). The actual
-//! Rapier simulation state lives in the [`PhysicsWorld`](crate::PhysicsWorld)
+//! solver state lives in the [`PhysicsWorld`](crate::PhysicsWorld)
 //! resource and is created/synced by [`step_physics`](crate::step_physics).
 
 use glam::Vec2;
@@ -81,7 +81,7 @@ impl RigidBody2D {
 }
 
 /// The collision shape for an entity. Dimensions are half-extents / radii in
-/// world units, matching Rapier's conventions.
+/// world units.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum ColliderShape {
     /// A circle of the given radius.

@@ -8,9 +8,9 @@
 //! 2. **Opacity-weighted voxelization** — accumulate each surviving splat's
 //!    opacity into a voxel grid and keep voxels whose total passes a threshold.
 //! 3. **Surface mesh** — emit the boundary faces of the occupied voxel set.
-//! 4. **Convex decomposition** — run VHACD (`tpt_nova_ingest::decompose`) on that
+//! 4. **Convex decomposition** — run `tpt_nova_ingest::decompose` on that
 //!    mesh to obtain a handful of approximately-convex parts, which become one
-//!    multi-part [`Collider3D`]. If VHACD yields nothing, each connected voxel
+//!    multi-part [`Collider3D`]. If decomposition yields nothing, each connected voxel
 //!    component falls back to its own convex hull.
 //!
 //! All parameters live in a serializable [`ProxyParams`] so a scene can record
@@ -43,9 +43,9 @@ pub struct ProxyParams {
     pub voxel_size: f32,
     /// Minimum accumulated opacity (in "opaque splat" units) for a voxel to count.
     pub voxel_density_threshold: f32,
-    /// Upper bound on convex parts produced by VHACD.
+    /// Upper bound on convex parts produced by decomposition.
     pub max_parts: u32,
-    /// VHACD concavity tolerance (lower = tighter fit, more parts).
+    /// Decomposition concavity tolerance (lower = tighter fit, more parts).
     pub concavity: f32,
 }
 
@@ -71,7 +71,7 @@ pub struct ProxyReport {
     pub kept_splats: usize,
     pub occupied_voxels: usize,
     pub parts: usize,
-    /// True when VHACD produced nothing and per-component hulls were used.
+    /// True when decomposition produced nothing and per-component hulls were used.
     pub used_fallback: bool,
 }
 

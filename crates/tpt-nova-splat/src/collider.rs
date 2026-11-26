@@ -3,7 +3,7 @@
 //! A captured Gaussian Splat scene is hundreds of thousands of anisotropic
 //! Gaussians — far too many to simulate individually. The pragmatic proxy is a
 //! single **low-poly convex hull** wrapping every splat center: one [`ConvexPart`]
-//! fed into `tpt-nova-ingest`'s [`Collider3D`], which the existing Rapier3D step
+//! fed into `tpt-nova-ingest`'s [`Collider3D`], which the existing 3D physics step
 //! (`tpt_nova_ingest::step_physics_3d`) already consumes as a compound hull. This
 //! gives captured environments solid, stable collision at a fraction of the
 //! cost, at the expense of concavities (acceptable for a first-pass proxy).

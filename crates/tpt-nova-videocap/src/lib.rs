@@ -6,7 +6,7 @@
 //! region can be unprojected into a cloud of 3D points, and that cloud becomes
 //! a low-poly **collision proxy** — a convex hull (or, as a fallback, an AABB
 //! box) wrapped in a `tpt_nova_ingest::Collider3D`. The result drops straight into
-//! the Rapier3D step (`tpt_nova_ingest::step_physics_3d`), so a videoed scene gains
+//! the 3D physics step (`tpt_nova_ingest::step_physics_3d`), so a videoed scene gains
 //! solid collision without hand-authoring every collider.
 //!
 //! The pure geometry here is fully testable offline: feed synthetic depth/mask

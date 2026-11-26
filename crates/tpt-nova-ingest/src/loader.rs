@@ -2,7 +2,7 @@
 //!
 //! [`load`] dispatches by file extension to [`load_gltf`] (`.gltf`/`.glb`, via
 //! the `gltf` crate) or [`load_obj`] (`.obj`, via `tobj`). Both return a list
-//! of [`MeshData`] — plain, GPU-free geometry the rest of the pipeline (VHACD
+//! of [`MeshData`] — plain, GPU-free geometry the rest of the pipeline (convex
 //! decomposition, auto-rig, collider generation) consumes.
 
 use std::path::Path;
