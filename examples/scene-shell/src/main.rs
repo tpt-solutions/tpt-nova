@@ -51,22 +51,28 @@ fn page() -> String {
     )
 }
 
-const STYLE: &str = r#"html, body { margin: 0; height: 100%; background: #101820; }
-canvas { display: block; width: 100vw; height: 100vh; image-rendering: pixelated; }
-#status { position: fixed; left: 8px; top: 8px; padding: 4px 8px; color: #fff;
-  background: rgba(0, 0, 0, 0.6); font: 14px sans-serif; }
+const STYLE: &str = r#"html, body { margin: 0; background: #101820; color: #ddd; font: 14px sans-serif; }
+h1 { margin: 12px 12px 4px; font-size: 22px; }
+p { margin: 4px 12px; }
+canvas { display: block; margin: 8px 12px; image-rendering: pixelated; }
+#status { position: fixed; right: 8px; bottom: 8px; padding: 4px 8px; color: #fff;
+  background: rgba(0, 0, 0, 0.6); }
 "#;
 
 const SCRIPT: &str = r#"(function () {
-  // Frames carry no binding name, so they go to the page's first viewport canvas.
-  var canvas = document.querySelector('canvas[data-viewport]');
-  var ctx = canvas.getContext('2d');
   var status = document.createElement('div');
   status.id = 'status';
   status.textContent = 'starting';
   document.body.appendChild(status);
   var frames = 0;
+  // Frames name their viewport; a frame without a name goes to the first viewport canvas.
+  function canvasFor(name) {
+    if (name) return document.querySelector('canvas[data-viewport="' + name + '"]');
+    return document.querySelector('canvas[data-viewport]');
+  }
   window.tpt.on('viewport.frame', function (frame) {
+    var canvas = canvasFor(frame.name);
+    if (!canvas) return; // not on the page yet; the next frame finds it
     try {
       if (canvas.width !== frame.width || canvas.height !== frame.height) {
         canvas.width = frame.width;
@@ -75,7 +81,7 @@ const SCRIPT: &str = r#"(function () {
       var binary = atob(frame.data);
       var pixels = new Uint8ClampedArray(binary.length);
       for (var i = 0; i < binary.length; i++) pixels[i] = binary.charCodeAt(i);
-      ctx.putImageData(new ImageData(pixels, frame.width, frame.height), 0, 0);
+      canvas.getContext('2d').putImageData(new ImageData(pixels, frame.width, frame.height), 0, 0);
       frames += 1;
       status.textContent = 'frames: ' + frames;
     } catch (err) {
@@ -154,7 +160,7 @@ fn main() -> tpt_shell::Result<()> {
                 break;
             }
             if let Some(px) = viewport.pixels() {
-                if let Err(err) = ui.viewport_frame("main", px.width, px.height, px.rgba) {
+                if let Err(err) = ui.viewport_frame_named("main", "scene", px.width, px.height, px.rgba) {
                     eprintln!("scene-shell: stopped sending frames: {err}");
                     break;
                 }
