@@ -168,9 +168,14 @@ impl World {
                 seen.insert(e.index, e.generation);
             }
         }
-        seen.into_iter()
+        // Sorted by index so iteration order is deterministic across runs
+        // (HashMap order is randomized per process).
+        let mut out: Vec<Entity> = seen
+            .into_iter()
             .map(|(idx, gen)| Entity::new(idx, gen))
-            .collect()
+            .collect();
+        out.sort_by_key(|e| e.index);
+        out
     }
 
     pub fn query_1<A: Component>(&self) -> Vec<(Entity, &A)> {
