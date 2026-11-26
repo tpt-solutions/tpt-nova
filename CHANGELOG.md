@@ -6,6 +6,18 @@ semantic versioning once it leaves Alpha.
 
 ## [Unreleased]
 
+### Fixed
+- **Multiple cubes in one pass:** the live renderer wrote every cube's transform into one
+  shared uniform buffer inside the draw loop. All queued writes take effect at submit, so
+  every cube in a frame drew with the last transform. Each draw now has its own uniform
+  buffer and bind group (`tpt-nova-render`).
+
+### Added
+- **Offscreen rendering:** `tpt_nova_render::OffscreenRenderer` renders the cube pass into an
+  RGBA8 texture and reads it back, with no window. `AppfrontScene::present` uses it, so the
+  appfront bridge now produces frames (`last_frame()`) instead of always reporting
+  unsupported.
+
 ### Changed
 - **Crate prefix:** every workspace crate is now `tpt-nova-*` (package names,
   directories under `crates/`, and Rust import paths `tpt_nova_*`). Example:

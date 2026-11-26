@@ -86,6 +86,14 @@ cargo run -p tpt-nova-scene-graph --example scene_window --release
 
 ![A lit cube on the scene background, rendered by tpt-nova-scene-graph](docs/images/scene_window.png)
 
+### Editor window (a captured frame)
+
+The live editor, captured on a local GPU from `cargo run -p tpt-nova-app --release`:
+hierarchy on the left, the viewport with the cube and the Vibe GUI Bézier curve
+in the centre, and the inspector on the right.
+
+![The TPT Nova editor window: hierarchy, viewport with a cube and the Vibe GUI curve, and inspector](docs/images/editor_window.png)
+
 ## 4. Run the headless pipeline demo
 
 No GPU required for the end-to-end sample that exercises the *whole* pipeline
