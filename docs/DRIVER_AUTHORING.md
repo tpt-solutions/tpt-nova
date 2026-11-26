@@ -104,6 +104,15 @@ registry.rollback(c)?;
 Activation takes effect on the next `snapshot()`. A frame already in progress
 keeps the driver it started with, so a swap never splits a frame.
 
+**Verification.** `DriverRegistry::new` and `with_policy` are permissive: `activate`
+works without a proof, which suits trusted host bootstrap. A host that needs the
+verification invariant (no driver runs without symbolic verification) uses
+`DriverRegistry::strict(policy)` instead. On a strict registry `activate` returns
+`RegistryError::VerificationRequired`, and a driver becomes active only through
+`activate_verified(component, version, &proof)`, where the `Verified` proof comes from
+`verify::verify_affine`. Native and unverified WASM drivers cannot run on a strict
+registry.
+
 ## 4. Shadow-testing a candidate before promotion
 
 Shadow execution is the gate between "compiles" and "active in the live world".

@@ -16,13 +16,14 @@
 //! - **Rollback history (Layer 3):** each activation records the version it
 //!   replaced, so [`DriverRegistry::rollback`] can revert in one call.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use arc_swap::ArcSwap;
 use tpt_nova_ecs::ComponentTypeId;
 
 use crate::driver::{Capability, CapabilitySet, Driver, DriverId, DriverVersion};
+use crate::verify::Verified;
 
 /// A shared, type-erased driver.
 pub type DriverHandle = Arc<dyn Driver>;
@@ -41,6 +42,8 @@ pub enum RegistryError {
     CapabilityDenied(Capability),
     #[error("no earlier active version is available to roll back to")]
     NoPreviousVersion,
+    #[error("this registry is strict: only drivers with a Verified proof can be activated")]
+    VerificationRequired,
 }
 
 /// One immutable published state: every registered driver, the active version
@@ -53,6 +56,12 @@ pub struct RegistryState {
     /// what [`DriverRegistry::rollback`] returns to.
     history: HashMap<ComponentTypeId, Vec<DriverVersion>>,
     policy: CapabilitySet,
+    /// When true, [`DriverRegistry::activate`] is refused and only
+    /// [`DriverRegistry::activate_verified`] (with a sealed [`Verified`] proof)
+    /// can make a driver active.
+    require_verification: bool,
+    /// `(component, version)` pairs that were activated with a [`Verified`] proof.
+    verified: HashSet<(ComponentTypeId, DriverVersion)>,
 }
 
 impl RegistryState {
@@ -98,6 +107,18 @@ impl RegistryState {
     pub fn policy(&self) -> &CapabilitySet {
         &self.policy
     }
+
+    /// Whether this registry only admits verified drivers (see [`DriverRegistry::strict`]).
+    pub fn requires_verification(&self) -> bool {
+        self.require_verification
+    }
+
+    /// Whether `version` of `component` is currently active *and* was activated
+    /// with a [`Verified`] proof.
+    pub fn is_verified_active(&self, component: ComponentTypeId, version: DriverVersion) -> bool {
+        self.active.get(&component) == Some(&version)
+            && self.verified.contains(&(component, version))
+    }
 }
 
 /// Thread-safe, versioned driver registry. See the module docs for the
@@ -131,6 +152,22 @@ impl DriverRegistry {
         }
     }
 
+    /// A registry that enforces the verification invariant (spec Core Invariant:
+    /// no driver is loaded without passing symbolic verification). Only
+    /// [`DriverRegistry::activate_verified`] can make a driver active; the
+    /// unverified [`DriverRegistry::activate`] is refused. This is what
+    /// native and unverified WASM drivers hit, so they cannot run in strict mode.
+    pub fn strict(policy: CapabilitySet) -> Self {
+        DriverRegistry {
+            state: ArcSwap::from_pointee(RegistryState {
+                policy,
+                require_verification: true,
+                ..Default::default()
+            }),
+            writer: Mutex::new(()),
+        }
+    }
+
     /// Take a consistent snapshot. Hold it for the duration of a frame.
     pub fn snapshot(&self) -> Arc<RegistryState> {
         self.state.load_full()
@@ -155,12 +192,33 @@ impl DriverRegistry {
     /// Make `version` the active driver for `component`, recording the version
     /// it replaces for rollback. Fails if the version is unknown or requests a
     /// capability the policy does not grant. Takes effect for the next snapshot.
+    ///
+    /// Refused with [`RegistryError::VerificationRequired`] on a strict registry.
+    /// On a permissive registry (the default) this is trusted host bootstrap:
+    /// it does not check verification, so the verification invariant holds only
+    /// for registries built with [`DriverRegistry::strict`].
     pub fn activate(
         &self,
         component: ComponentTypeId,
         version: DriverVersion,
     ) -> Result<(), RegistryError> {
-        self.set_active(component, version, true)
+        if self.snapshot().require_verification {
+            return Err(RegistryError::VerificationRequired);
+        }
+        self.set_active(component, version, true, false)
+    }
+
+    /// Make `version` active, presenting a sealed [`Verified`] proof. Works on
+    /// both strict and permissive registries. The proof can only be created by
+    /// [`crate::verify::verify_affine`], and the repair loop is the only caller
+    /// that passes a proof for the exact candidate it verified.
+    pub fn activate_verified(
+        &self,
+        component: ComponentTypeId,
+        version: DriverVersion,
+        _proof: &Verified,
+    ) -> Result<(), RegistryError> {
+        self.set_active(component, version, true, true)
     }
 
     /// Revert `component` to the version active before the current one.
@@ -200,6 +258,7 @@ impl DriverRegistry {
         component: ComponentTypeId,
         version: DriverVersion,
         record_history: bool,
+        verified: bool,
     ) -> Result<(), RegistryError> {
         let _guard = self.writer.lock().unwrap_or_else(|e| e.into_inner());
         let mut next = (*self.state.load_full()).clone();
@@ -223,6 +282,11 @@ impl DriverRegistry {
             }
         }
         next.active.insert(component, version);
+        if verified {
+            next.verified.insert((component, version));
+        } else {
+            next.verified.remove(&(component, version));
+        }
         self.state.store(Arc::new(next));
         Ok(())
     }
@@ -345,6 +409,43 @@ mod tests {
             reg.snapshot().active_version(c),
             Some(DriverVersion::new(2, 0, 0))
         );
+    }
+
+    #[test]
+    fn strict_registry_refuses_unverified_activation() {
+        use crate::verify::{verify_affine, AffineModel, Bounds};
+        let c = ComponentTypeId::of::<Gravity>();
+        let reg = DriverRegistry::strict(CapabilitySet::empty());
+        assert!(reg.snapshot().requires_verification());
+        reg.register(driver(1)).unwrap();
+        assert_eq!(
+            reg.activate(c, DriverVersion::new(1, 0, 0)),
+            Err(RegistryError::VerificationRequired)
+        );
+        assert_eq!(reg.snapshot().active_version(c), None);
+
+        let model = AffineModel {
+            num: 1,
+            den: 1,
+            offset: 0,
+        };
+        let bounds = Bounds { lo: 0, hi: 10 };
+        let proof = verify_affine(model, bounds, bounds).unwrap();
+        reg.activate_verified(c, DriverVersion::new(1, 0, 0), &proof)
+            .unwrap();
+        let snap = reg.snapshot();
+        assert!(snap.is_verified_active(c, DriverVersion::new(1, 0, 0)));
+    }
+
+    #[test]
+    fn permissive_activation_is_not_marked_verified() {
+        let c = ComponentTypeId::of::<Gravity>();
+        let reg = DriverRegistry::new();
+        reg.register(driver(1)).unwrap();
+        reg.activate(c, DriverVersion::new(1, 0, 0)).unwrap();
+        assert!(!reg
+            .snapshot()
+            .is_verified_active(c, DriverVersion::new(1, 0, 0)));
     }
 
     #[test]

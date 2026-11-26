@@ -178,7 +178,8 @@ where
             Ok(()) | Err(RegistryError::Duplicate { .. }) => {}
             Err(e) => return Err(e.into()),
         }
-        site.registry.activate(site.component, version)?;
+        site.registry
+            .activate_verified(site.component, version, &verified)?;
         memory
             .learned
             .insert(invariant.name().to_string(), candidate);
