@@ -1,5 +1,7 @@
 [workspace]
 resolver = "2"
+# Standalone demos with their own dependencies (see each folder).
+exclude = ["examples/scene-shell"]
 members = [
     "crates/tpt-nova-ecs",
     "crates/tpt-nova-telemetry",

@@ -1,0 +1,19 @@
+# A standalone demo, not part of the tpt-nova workspace: it depends on tpt-shell (a
+# Windows webview shell, pulled from git) and so stays out of the main CI and license
+# checks. Build and run it from this directory:
+#   cargo run --release -- <path to WebView2Loader.dll>
+
+[package]
+name = "scene-shell"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "A tpt-nova 3D scene streamed into a tpt-shell window"
+
+[workspace]
+
+[dependencies]
+tpt-nova-scene-graph = { path = "../../crates/tpt-nova-scene-graph", features = ["appfront"] }
+tpt-appfront-canvas-3d = { git = "https://github.com/tpt-solutions/tpt-appfront" }
+tpt-shell = { git = "https://github.com/tpt-solutions/tpt-shell" }
+glam = "0.29"
