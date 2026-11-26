@@ -116,7 +116,7 @@ Change it with `scene.enable_post_process` and `scene.disable_post_process`. The
 ## 6. Hosting in an appfront viewport (feature `appfront`)
 
 `AppfrontScene` implements `SceneDelegate` from `tpt-appfront-canvas-3d`. The
-trait is on the local `tpt-appfront` branch `canvas-3d`. Enable the feature:
+trait is in `tpt-appfront` (crate `tpt-appfront-canvas-3d`, on GitHub). Enable the feature:
 
 ```sh
 cargo test -p tpt-nova-scene-graph --features appfront
@@ -137,8 +137,7 @@ if let Some(hit) = vp.pointer_down(ViewportPoint { x: mouse_x, y: mouse_y }) {
 
 Picking works. Presenting pixels does not: the GPU renderer has no readback into
 the appfront canvas, so `frame` returns `PresentStatus::Unsupported`. The
-optional dependency is a path to the local checkout, so switch it to a git
-dependency once `canvas-3d` is pushed.
+dependency is a git dependency on `tpt-solutions/tpt-appfront`.
 
 ## 7. Web (wasm32)
 

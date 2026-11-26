@@ -18,9 +18,8 @@ tpt-nova-render = { workspace = true }
 glam = { version = "0.29", features = ["std", "serde"] }
 serde = { version = "1", features = ["derive"] }
 thiserror = { workspace = true }
-# Optional appfront bridge. The path points at the local tpt-appfront checkout (branch
-# canvas-3d). Switch to a git dependency once that branch is pushed.
-tpt-appfront-canvas-3d = { path = "../../../tpt-appfront/crates/tpt-appfront-canvas-3d", optional = true }
+# Optional appfront bridge: the 3D viewport contract (SceneDelegate) from tpt-appfront.
+tpt-appfront-canvas-3d = { git = "https://github.com/tpt-solutions/tpt-appfront", optional = true }
 
 [features]
 appfront = ["dep:tpt-appfront-canvas-3d"]

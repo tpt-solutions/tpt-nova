@@ -509,8 +509,8 @@ until Phase 10 Step 1 is being implemented (CLAUDE.md: no speculative crates).
 - [ ] Tune default values for premium out-of-the-box visuals — defaults are set (bloom 0.8/0.6, ACES 1.0, FXAA on) but not yet tuned by eye against a rendered scene
 
 ### Phase 3: Appfront Bridge
-- [x] Add the `appfront` feature flag to `tpt-nova-scene-graph` (opt-in; core engine must not depend on appfront) — the optional dependency is a path to the local `tpt-appfront` checkout (branch `canvas-3d`). Switch it to a git dependency once that branch is pushed.
-- [x] Implement `AppfrontSceneDelegate` against the `SceneDelegate` trait from `tpt-appfront-canvas-3d` — `appfront.rs` (`AppfrontScene`). Picking works through `pick.rs`. `present` reports `Unsupported`, because there is no GPU readback into the appfront canvas. The trait lives in the local appfront branch `canvas-3d` (commit 8c8b007), not yet pushed.
+- [x] Add the `appfront` feature flag to `tpt-nova-scene-graph` (opt-in; core engine must not depend on appfront) — the optional dependency is a git dependency on `tpt-solutions/tpt-appfront` (branch `canvas-3d`). Switch it to a git dependency once that branch is pushed.
+- [x] Implement `AppfrontSceneDelegate` against the `SceneDelegate` trait from `tpt-appfront-canvas-3d` — `appfront.rs` (`AppfrontScene`). Picking works through `pick.rs`. `present` reports `Unsupported`, because there is no GPU readback into the appfront canvas. The trait is in `tpt-appfront` on GitHub (commit 1d9244c).
 - [x] Handle pointer-event raycasting (2D screen coords → 3D world coords) — `pick.rs`: `screen_ray` unprojects a pixel and `pick` returns the nearest visible cube, handling rotation and scale. Covers the cube only.
 - [ ] Test embedding the scene in a `tpt-appfront` UI running in `tpt-shell` and as a Wasm PWA — not done. The bridge is tested headless (`Viewport3D` with picking). The appfront canvas has no GPU presentation, and the tpt-shell and PWA runs are not attempted.
 
@@ -522,5 +522,5 @@ until Phase 10 Step 1 is being implemented (CLAUDE.md: no speculative crates).
 ### Open questions (from spec3.txt)
 - [x] **Raycasting:** decided and built — a lightweight AABB raycaster in the scene graph (`pick.rs`), following spec3's recommendation. Physics queries stay in `tpt-nova-physics`.
 - [ ] **Animator:** add a high-level `Animator` wrapper over `tpt-nova-anim` in Phase 4, or leave animation driven manually? (spec3 recommends the wrapper)
-- [x] **External repo:** answered — `tpt-appfront-canvas-3d` did not exist. It now exists on the local appfront branch `canvas-3d` (commit 8c8b007, dependency-free `SceneDelegate` and `Viewport3D`, 4 tests). Not pushed.
+- [x] **External repo:** answered — `tpt-appfront-canvas-3d` did not exist. It now exists in `tpt-appfront` on GitHub (commit 1d9244c, dependency-free `SceneDelegate` and `Viewport3D`, 4 tests).
 - [ ] **Backing store:** should the scene graph optionally be ECS-backed for large scenes (spec3 §7), defaulting to an in-memory graph?
