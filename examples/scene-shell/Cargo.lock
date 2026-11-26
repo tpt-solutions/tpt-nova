@@ -392,7 +392,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e35d6e78f4cebb90e51d543db8fe41528851d6deeef6ef21ebd4bfdc1e784776"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1227,7 +1227,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1664,7 +1664,7 @@ dependencies = [
 [[package]]
 name = "tpt-shell"
 version = "0.0.0"
-source = "git+https://github.com/tpt-solutions/tpt-shell#51ab9e260d8e00278f7a73db161518cb889de508"
+source = "git+https://github.com/tpt-solutions/tpt-shell#aef7d77d058a6a1e3584b1bcfc5debbb7ae3a223"
 dependencies = [
  "serde_json",
  "tpt-shell-audit",
@@ -1685,7 +1685,7 @@ dependencies = [
 [[package]]
 name = "tpt-shell-agent"
 version = "0.0.0"
-source = "git+https://github.com/tpt-solutions/tpt-shell#51ab9e260d8e00278f7a73db161518cb889de508"
+source = "git+https://github.com/tpt-solutions/tpt-shell#aef7d77d058a6a1e3584b1bcfc5debbb7ae3a223"
 dependencies = [
  "serde",
  "serde_json",
@@ -1697,7 +1697,7 @@ dependencies = [
 [[package]]
 name = "tpt-shell-audit"
 version = "0.0.0"
-source = "git+https://github.com/tpt-solutions/tpt-shell#51ab9e260d8e00278f7a73db161518cb889de508"
+source = "git+https://github.com/tpt-solutions/tpt-shell#aef7d77d058a6a1e3584b1bcfc5debbb7ae3a223"
 dependencies = [
  "ed25519-dalek",
  "serde_json",
@@ -1708,12 +1708,12 @@ dependencies = [
 [[package]]
 name = "tpt-shell-capabilities"
 version = "0.0.0"
-source = "git+https://github.com/tpt-solutions/tpt-shell#51ab9e260d8e00278f7a73db161518cb889de508"
+source = "git+https://github.com/tpt-solutions/tpt-shell#aef7d77d058a6a1e3584b1bcfc5debbb7ae3a223"
 
 [[package]]
 name = "tpt-shell-compliance"
 version = "0.0.0"
-source = "git+https://github.com/tpt-solutions/tpt-shell#51ab9e260d8e00278f7a73db161518cb889de508"
+source = "git+https://github.com/tpt-solutions/tpt-shell#aef7d77d058a6a1e3584b1bcfc5debbb7ae3a223"
 dependencies = [
  "serde_json",
  "toml",
@@ -1723,12 +1723,12 @@ dependencies = [
 [[package]]
 name = "tpt-shell-core"
 version = "0.0.0"
-source = "git+https://github.com/tpt-solutions/tpt-shell#51ab9e260d8e00278f7a73db161518cb889de508"
+source = "git+https://github.com/tpt-solutions/tpt-shell#aef7d77d058a6a1e3584b1bcfc5debbb7ae3a223"
 
 [[package]]
 name = "tpt-shell-devices"
 version = "0.0.0"
-source = "git+https://github.com/tpt-solutions/tpt-shell#51ab9e260d8e00278f7a73db161518cb889de508"
+source = "git+https://github.com/tpt-solutions/tpt-shell#aef7d77d058a6a1e3584b1bcfc5debbb7ae3a223"
 dependencies = [
  "libc",
 ]
@@ -1736,7 +1736,7 @@ dependencies = [
 [[package]]
 name = "tpt-shell-devtools"
 version = "0.0.0"
-source = "git+https://github.com/tpt-solutions/tpt-shell#51ab9e260d8e00278f7a73db161518cb889de508"
+source = "git+https://github.com/tpt-solutions/tpt-shell#aef7d77d058a6a1e3584b1bcfc5debbb7ae3a223"
 dependencies = [
  "serde_json",
  "tpt-shell-replay",
@@ -1745,7 +1745,7 @@ dependencies = [
 [[package]]
 name = "tpt-shell-ipc"
 version = "0.0.0"
-source = "git+https://github.com/tpt-solutions/tpt-shell#51ab9e260d8e00278f7a73db161518cb889de508"
+source = "git+https://github.com/tpt-solutions/tpt-shell#aef7d77d058a6a1e3584b1bcfc5debbb7ae3a223"
 dependencies = [
  "serde",
  "serde_json",
@@ -1755,7 +1755,7 @@ dependencies = [
 [[package]]
 name = "tpt-shell-kiosk"
 version = "0.0.0"
-source = "git+https://github.com/tpt-solutions/tpt-shell#51ab9e260d8e00278f7a73db161518cb889de508"
+source = "git+https://github.com/tpt-solutions/tpt-shell#aef7d77d058a6a1e3584b1bcfc5debbb7ae3a223"
 dependencies = [
  "ed25519-dalek",
  "serde",
@@ -1766,7 +1766,7 @@ dependencies = [
 [[package]]
 name = "tpt-shell-macros"
 version = "0.0.0"
-source = "git+https://github.com/tpt-solutions/tpt-shell#51ab9e260d8e00278f7a73db161518cb889de508"
+source = "git+https://github.com/tpt-solutions/tpt-shell#aef7d77d058a6a1e3584b1bcfc5debbb7ae3a223"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1777,7 +1777,7 @@ dependencies = [
 [[package]]
 name = "tpt-shell-manifest"
 version = "0.0.0"
-source = "git+https://github.com/tpt-solutions/tpt-shell#51ab9e260d8e00278f7a73db161518cb889de508"
+source = "git+https://github.com/tpt-solutions/tpt-shell#aef7d77d058a6a1e3584b1bcfc5debbb7ae3a223"
 dependencies = [
  "serde",
  "toml",
@@ -1787,7 +1787,7 @@ dependencies = [
 [[package]]
 name = "tpt-shell-platform-windows"
 version = "0.0.0"
-source = "git+https://github.com/tpt-solutions/tpt-shell#51ab9e260d8e00278f7a73db161518cb889de508"
+source = "git+https://github.com/tpt-solutions/tpt-shell#aef7d77d058a6a1e3584b1bcfc5debbb7ae3a223"
 dependencies = [
  "serde_json",
  "tpt-shell-agent",
@@ -1804,7 +1804,7 @@ dependencies = [
 [[package]]
 name = "tpt-shell-profiles"
 version = "0.0.0"
-source = "git+https://github.com/tpt-solutions/tpt-shell#51ab9e260d8e00278f7a73db161518cb889de508"
+source = "git+https://github.com/tpt-solutions/tpt-shell#aef7d77d058a6a1e3584b1bcfc5debbb7ae3a223"
 dependencies = [
  "chacha20poly1305",
  "getrandom 0.2.17",
@@ -1816,7 +1816,7 @@ dependencies = [
 [[package]]
 name = "tpt-shell-replay"
 version = "0.0.0"
-source = "git+https://github.com/tpt-solutions/tpt-shell#51ab9e260d8e00278f7a73db161518cb889de508"
+source = "git+https://github.com/tpt-solutions/tpt-shell#aef7d77d058a6a1e3584b1bcfc5debbb7ae3a223"
 dependencies = [
  "serde_json",
  "sha2",
@@ -1827,7 +1827,7 @@ dependencies = [
 [[package]]
 name = "tpt-shell-test"
 version = "0.0.0"
-source = "git+https://github.com/tpt-solutions/tpt-shell#51ab9e260d8e00278f7a73db161518cb889de508"
+source = "git+https://github.com/tpt-solutions/tpt-shell#aef7d77d058a6a1e3584b1bcfc5debbb7ae3a223"
 dependencies = [
  "serde_json",
  "tpt-shell-core",
@@ -2303,7 +2303,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
