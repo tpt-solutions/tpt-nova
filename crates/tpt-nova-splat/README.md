@@ -14,7 +14,7 @@ Part of [TPT Nova](../../README.md), the AI-native, ECS-based real-time engine.
 | Compressed layout | `compress` | Quantized, 256-splat chunks (PlayCanvas-style). A `.ply` with `packed_position` is detected automatically. Round-trip tested only; not yet checked against a third-party export. |
 | Color | `sh` | Real SH evaluation (degrees 0–3) matching the reference 3DGS basis. `SplatQuality { sh_degree }` caps it at runtime. |
 | Editing | `edit` | `select_in_aabb`, `select_in_screen_rect` (via `tpt-nova-overlay`), `delete`, `crop`, `transform` (exact for non-uniform scale; SH is not rotated). |
-| Collision | `collider`, `proxy` | `build_convex_hull_collider` (single hull) or `build_proxy_collider` (floater filter → voxels → VHACD, with per-component hull fallback). Parameters live in a serializable `ProxyParams`. |
+| Collision | `collider`, `proxy` | `build_convex_hull_collider` (single hull) or `build_proxy_collider` (floater filter → voxels → convex decomposition, with per-component hull fallback). Parameters live in a serializable `ProxyParams`. |
 | Scale | `lod` | Morton-ordered spatial chunks, frustum culling, distance LOD, and seeded deterministic `decimate`. |
 | Telemetry | `telemetry`, `edit::SplatSummary` | Adds a `SplatSummary` (count, bounds, SH degree, opacity histogram) to each splat entity's telemetry dump. |
 | Rendering | `render` (feature) | Oriented EWA-style ellipses, storage buffers per chunk, CPU back-to-front sort, premultiplied blending with depth writes off. |
@@ -33,7 +33,7 @@ Part of [TPT Nova](../../README.md), the AI-native, ECS-based real-time engine.
 ## Workspace dependencies
 
 - `tpt-nova-ecs`
-- `tpt-nova-ingest` (VHACD and convex hulls, `Collider3D`)
+- `tpt-nova-ingest` (convex decomposition, hulls, `Collider3D`)
 - `tpt-nova-overlay` (screen-space selection)
 - `tpt-nova-telemetry` (summary attachment)
 

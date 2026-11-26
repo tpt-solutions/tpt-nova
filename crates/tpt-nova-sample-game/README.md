@@ -10,12 +10,12 @@ API, splat ingestion, and packaging) comes for free.
 
 `run_pipeline()` exercises the *entire* engine in one flow:
 
-1. **Physics** — a dynamic player box falls onto a fixed ground (Rapier3D).
+1. **Physics** — a dynamic player box falls onto a fixed ground (`tpt-nova-ingest`'s in-house 3D solver).
 2. **Scene save/load** — the world is serialized to RON and reloaded.
 3. **Agent control** — an external-style `AgentCommand` spawns an NPC and moves
    it through the stable `tpt-nova-agent-api` surface.
-4. **Splat ingestion** — a Gaussian Splat point cloud is loaded and a convex-hull
-   collision proxy is derived from it.
+4. **Splat ingestion** — a Gaussian Splat point cloud is loaded and a multi-part
+   collision proxy (`build_proxy_collider`) is derived from it.
 5. **Packaging** — the scene is bundled into a `.novapack` asset container and
    unpacked, proving the standalone distribution path.
 

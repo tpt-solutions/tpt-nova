@@ -6,6 +6,10 @@ The runtime application shell: a tpt-window window, wgpu rendering, a fixed-time
 
 Part of [TPT Nova](../../README.md), the AI-native, ECS-based real-time engine.
 
+## Windowing and input
+
+The window comes from `tpt-window` (a git dependency), not `winit`. The caller owns the event loop and renders on event batches. Because `tpt-window` reports physical keys, editor shortcuts use QWERTY letter positions. Text input comes from IME commits.
+
 ## Workspace dependencies
 
 - `tpt-nova-ecs`

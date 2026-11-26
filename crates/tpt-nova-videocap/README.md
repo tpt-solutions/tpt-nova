@@ -2,7 +2,7 @@
 
 > Video-to-ECS ingestion for TPT Nova: depth map + segmentation mask -> collision proxies
 
-Video-to-ECS ingestion: depth maps and segmentation masks become low-poly collision proxies for Rapier3D.
+Video-to-ECS ingestion: depth maps and segmentation masks become low-poly collision proxies (in-house convex hulls) for `tpt-nova-ingest`'s 3D physics step.
 
 Part of [TPT Nova](../../README.md), the AI-native, ECS-based real-time engine.
 

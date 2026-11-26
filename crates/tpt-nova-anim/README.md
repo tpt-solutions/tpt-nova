@@ -6,6 +6,12 @@ Skeletal animation: skinning matrices, keyframe sampling, pose blending, and a s
 
 Part of [TPT Nova](../../README.md), the AI-native, ECS-based real-time engine.
 
+## State machine
+
+`AnimationGraph` exposes `current_state`, `is_blending`, and `jump_to` (a hard
+cut). `tpt-nova-scene-graph`'s `Animator` wraps these with crossfades and
+playback helpers.
+
 ## Workspace dependencies
 
 - `tpt-nova-ecs`

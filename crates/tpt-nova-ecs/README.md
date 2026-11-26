@@ -6,6 +6,11 @@ A custom, data-oriented Entity-Component-System core with a scene graph, determi
 
 Part of [TPT Nova](../../README.md), the AI-native, ECS-based real-time engine.
 
+## Determinism
+
+`World::entities()` returns entities sorted by index, so a tick visits them in the
+same order on every run.
+
 ## Testing
 
 ```sh
