@@ -12,7 +12,9 @@
 //!   `PresentStatus::Unsupported` and picking still works.
 
 use glam::Vec2;
-use tpt_appfront_canvas_3d::{Hit3D, PresentStatus, SceneDelegate, ViewportPoint, ViewportSize};
+use tpt_appfront_canvas_3d::{
+    Hit3D, PixelFrame, PresentStatus, SceneDelegate, ViewportPoint, ViewportSize,
+};
 use tpt_nova_ecs::world::World;
 use tpt_nova_render::{Frame, OffscreenRenderer};
 
@@ -82,6 +84,14 @@ impl SceneDelegate for AppfrontScene {
             id: u64::from(hit.node.0),
             point: hit.point.to_array(),
             distance: hit.distance,
+        })
+    }
+
+    fn pixels(&self) -> Option<PixelFrame<'_>> {
+        self.last_frame.as_ref().map(|f| PixelFrame {
+            width: f.width,
+            height: f.height,
+            rgba: &f.rgba,
         })
     }
 
@@ -197,6 +207,10 @@ mod tests {
             .last_frame()
             .expect("a presented frame is kept");
         assert_eq!((frame.width, frame.height), (96, 64));
+        // The host reads the same frame through the appfront contract.
+        let shared = vp.pixels().expect("the viewport exposes the frame");
+        assert_eq!((shared.width, shared.height), (96, 64));
+        assert_eq!(shared.rgba, frame.rgba.as_slice());
         let background = frame.pixel(0, 0).unwrap();
         assert_ne!(
             frame.pixel(48, 32).unwrap(),
