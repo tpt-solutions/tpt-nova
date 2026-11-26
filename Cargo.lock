@@ -1002,9 +1002,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "899def5c37c4fd7b2664648c28120ecec138e4d395b459e5ca34f9cce2dd77fd"
 dependencies = [
  "cfg-if",
+ "js-sys",
  "libc",
  "r-efi 5.3.0",
  "wasip2",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -3540,6 +3542,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
 
 [[package]]
+name = "tpt-appfront-canvas-3d"
+version = "0.1.1"
+
+[[package]]
 name = "tpt-av-cadence-core"
 version = "0.1.0"
 source = "git+https://github.com/tpt-solutions/tpt-cadence?rev=48b8e4b6273f5a047ae8650d3d1e9d3fbb01aa70#48b8e4b6273f5a047ae8650d3d1e9d3fbb01aa70"
@@ -3588,6 +3594,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "env_logger",
+ "getrandom 0.3.4",
  "glam",
  "log",
  "serde",
@@ -3624,6 +3631,7 @@ name = "tpt-nova-drivers"
 version = "0.1.0"
 dependencies = [
  "arc-swap",
+ "libloading",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
@@ -3659,6 +3667,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "thiserror 1.0.69",
 ]
 
@@ -3783,8 +3792,10 @@ dependencies = [
  "glam",
  "serde",
  "thiserror 1.0.69",
+ "tpt-appfront-canvas-3d",
  "tpt-nova-ecs",
  "tpt-nova-render",
+ "tpt-window",
 ]
 
 [[package]]

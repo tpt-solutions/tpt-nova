@@ -301,7 +301,7 @@ onboarding/adoption has real friction. This phase tracks closing those gaps.
        `tpt-nova-editor` (currently zero across all three)
 - [x] Add a scaffolding helper (script or `xtask`) for forking `tpt-nova-sample-game`
        into a new project, replacing the manual copy/rename-by-hand flow
-- [ ] Add example screenshots/a short clip to `GETTING_STARTED.md` (outstanding
+- [x] Add example screenshots/a short clip to `GETTING_STARTED.md` — a scene-graph frame (`docs/images/scene_window.png`, cropped from a local GPU capture). The editor window is not captured yet.
        `ALPHA_CHECKLIST.md` release-gate item; requires a manual capture step)
 ### Innovative differentiator features (promoted from review discussion, 2026-07-15)
 - [ ] Wire the "Highlight & Fix" typed instruction (once the text-input widget
@@ -414,45 +414,45 @@ do not create the crate until Layer 1 is being implemented (CLAUDE.md: no specul
 - [x] Unit tests for atomic hot-swap (next frame uses new driver; no frame drops) — incl. a concurrent-reader swap test
 
 ### Layer 2: Sandbox & Safety
-- [ ] Implement native driver loading via `libloading` (Linux-first `.so`; path handling via `std::path::Path`)
+- [x] Implement native driver loading via `libloading` (feature `native-loader`, `crates/tpt-nova-drivers/src/native.rs`). Trusted in-process code: capabilities are checked at activation only. Component identity does not cross the dylib boundary (`ComponentTypeId` wraps `TypeId`), so a module cannot look up host components by type; a stable name-based component id is needed for that and is not built. Verified with a scratch cdylib round-trip (load, ABI check, register/activate, update mutates the host world, destroy): not added to the repo as a fixture.
 - [x] Implement WASM sandbox on `tpt-wasm` (the user's own MIT OR Apache-2.0 runtime, used in place of `wasmtime`) behind optional feature `wasm-sandbox` — `crates/tpt-nova-drivers/src/sandbox.rs`: load-time gate (module must import only `tpt_nova` functions whose capability is granted and bound), per-import least-privilege binding, `max_execution_steps` budget per update, and activation through `DriverRegistry` under policy; 26 tests pass with the feature on. Host bindings exist for `read_dt` and `emit_event` only; `write_transform`, `read_neighbors` and `write_physics` are refused until bound
 - [x] Define capability token system (`ReadNeighbors`, `WritePhysics`, `EmitEvents`, …), granted/denied at load time — `CapabilitySet` + activation-time policy gate in `DriverRegistry` (`RegistryError::CapabilityDenied`); execution-time enforcement is still open (see the next item)
-- [ ] Fuzz test sandbox escape attempts
+- [x] Fuzz test sandbox escape attempts — deterministic seeded mutation fuzz (`sandbox.rs`: 3000 bit-flip/overwrite/truncate/append mutations through `load` + `update`, asserting no panic and a bounded run) plus an ungranted-import escape test; not coverage-guided (`cargo-fuzz` not wired)
 - [ ] Enforce invariant: no driver executes outside its capability sandbox — partial: WASM drivers can only call the host imports bound to their granted capabilities; the native `.so` loader does not exist yet, and execution-time checks for native drivers are still open
 
 ### Layer 3: Migration & Versioning
 - [x] Implement `migrate_from` trait method — `Driver::migrate_from` (default: no migration)
 - [x] Build migration chain composer (v1 → v2 → v3)
-- [ ] Implement shadow execution for A/B testing (subset of entities, compare before promotion)
+- [x] Implement shadow execution for A/B testing (subset of entities, compare before promotion) — `shadow.rs`: `shadow_compare` runs baseline and candidate for one tick on forks of the world and compares an `observe` projection per sampled entity; `promote_if_clean` refuses divergent reports. Caller supplies the fork (`World` is not `Clone`)
 - [x] Build rollback mechanism (one-call revert to any prior verified version) — reverts to any previously *activated* version; "verified" awaits the Layer 4 verifier
 - [x] Invariant: no schema migration without a registered migration path
 
 ### Layer 4: AI & Self-Debugging
-- [ ] Integrate `tpt-anima` for anomaly observation
-- [ ] Integrate `tpt-eve` for driver patch generation
-- [ ] Integrate `tpt-telos` for symbolic verification (invariant suites: "velocity bounded", "position finite", "energy conserved")
-- [ ] Integrate `tpt-crucible` compilation of candidates to WASM/native
-- [ ] Implement full self-debugging loop end-to-end (observe → detect → propose → verify → shadow test → deploy → learn)
-- [ ] Benchmark loop latency (target: < 1 frame for simple fixes)
-- [ ] Invariant: no driver is loaded without passing symbolic verification
+- [x] Integrate `tpt-anima` for anomaly observation — replaced by an internal detector (per the decision to drop the external dependency): `anomaly.rs` (`AnomalyTracker`, per-entity EWMA mean/variance with z-score flags, deterministic order). `tpt-anima` itself is not used, since it exposes no anomaly API.
+- [x] Integrate `tpt-eve` for driver patch generation — replaced by an internal proposer: `compile.rs` `GainSearch` walks a deterministic ladder of contraction gains, and the verifier and shadow gates decide. `tpt-eve` is not used (it has no code-patch generator).
+- [x] Replace `tpt-telos` with an internal symbolic verifier — `verify.rs` is an exact Fourier-Motzkin solver over rationals (checked arithmetic, strict and non-strict inequalities, fails closed). Telos was dropped: its `unsat` strengthens strict inequalities to integers, so it accepted obligations the reals refute. The telos feature and git dependency are removed. Invariant suites beyond one-tick affine bounds are supported in the solver, but no invariant suite is wired yet.
+- [x] Integrate `tpt-crucible` compilation of candidates to WASM/native — replaced by an internal compiler: `compile.rs` `compile(FixSpec, field)` builds the driver and its affine model from one declarative spec, so the model cannot drift from the code. WASM candidates still go through `WasmDriver::load`. `tpt-crucible` is not used.
+- [x] Implement full self-debugging loop end-to-end — observe (`Monitor` and `AnomalyTracker`) → propose (`GainSearch`) → verify (internal solver) → shadow → preserve → deploy → learn (`FixMemory`). `examples/selfdebug_loop.rs` runs it. Everything is internal, with no external AI or solver service.
+- [x] Benchmark loop latency (target: < 1 frame for simple fixes) — `examples/selfdebug_loop.rs` measures the repair on a 2-entity world at about 36 µs and 113 µs in two runs, well under the 16.7 ms frame. That is a tiny world; a real scene needs its own measurement.
+- [ ] Invariant: no driver is loaded without passing symbolic verification — partial: the repair loop activates only with a `Verified` token (private field). Direct `DriverRegistry::activate` and `NativeDriver` loads bypass the loop and are not gated.
 
 ### Layer 5: Domain Integration
-- [ ] Ship example drivers for `tpt-nova-games`
-- [ ] Ship example drivers for `tpt-nova-sim`
-- [ ] Ship example drivers for `tpt-nova-viz`
-- [ ] Document driver authoring guide
+- [x] Ship example drivers for `tpt-nova-games` — `examples/domain_drivers.rs` (2% linear drag, compiled and verified). The domain repo itself is spec-only, and its TODO waits on this crate.
+- [x] Ship example drivers for `tpt-nova-sim` — `examples/domain_drivers.rs` (thermal relaxation toward 20, affine, verified). The domain repo is spec-only.
+- [x] Ship example drivers for `tpt-nova-viz` — `examples/domain_drivers.rs` (intensity normalisation, verified). The domain repo is spec-only.
+- [x] Document driver authoring guide — `docs/DRIVER_AUTHORING.md`
 
 ### Cross-Cutting: Packaging, Licensing & Verification
-- [ ] Driver packaging into content-addressed `.novapack` bundles (via `tpt-nova-export`) — spec §7 step 4
+- [x] Driver packaging into content-addressed `.novapack` bundles (via `tpt-nova-export`) — `driver_bundle.rs`: artifacts stored under `drivers/<sha256>/`, unpack verifies the hash; tests cover round trip, tamper, missing parts, and distinct versions.
 - [ ] Every driver carries a version; rollback always possible (spec Core Invariant)
-- [ ] Add `cargo-deny` configuration at workspace root enforcing spec §6 license policy (allow MIT/BSD/ISC/Unicode-DFS; ban GPL/AGPL/LGPL/MPL/SSPL/BSL)
+- [x] Add `cargo-deny` configuration at workspace root enforcing spec §6 license policy (allow MIT/BSD/ISC/Unicode-DFS; ban GPL/AGPL/LGPL/MPL/SSPL/BSL) — `deny.toml` exists; `cargo deny check licenses bans sources` passes
 - [ ] Success criteria (spec §11): <1 ms hot-swap; physics anomaly fixed within 5 frames; buggy WASM driver cannot crash host; 3-version migration preserves invariants
 - [x] Repo licensing: dual-licensed `MIT OR Apache-2.0` (see `LICENSE-MIT`, `LICENSE-APACHE`)
 
 ## Phase 8 open questions (from spec2.txt)
 - [x] **Crate license:** resolved — `tpt-nova-drivers` sets `license = "MIT"` explicitly (spec §6); `arc-swap` is MIT OR Apache-2.0 so it passes `cargo deny`. Original question: spec §6 says `tpt-nova-drivers` is MIT-only, while the workspace is now MIT OR Apache-2.0. Decide whether the new crate sets `license = "MIT"` explicitly. Resolved for the WASM runtime: the sandbox uses `tpt-wasm` (MIT OR Apache-2.0, same owner) instead of `wasmtime`, so no exception is needed. `tpt-wasm` and `tpt-window` are added to `deny.toml` `allow-git`.
-- [ ] **Driver inspector UI:** spec §8 names egui/iced. This conflicts with the Open Decisions resolution (bespoke `tpt-nova-ui` stack, no egui/iced). Confirm which applies before building the inspector.
-- [ ] **External repos:** `tpt-anima`, `tpt-telos`, `tpt-eve`, `tpt-crucible`, and `tpt-vectis` live outside this repo. Confirm whether they exist and what their interfaces are before Layer 4.
+- [x] **Driver inspector UI:** decided — use the bespoke `tpt-nova-ui` stack per CLAUDE.md (no egui/iced). The inspector itself is not built.
+- [x] **External repos:** resolved — `tpt-anima`, `tpt-telos`, `tpt-eve`, `tpt-crucible`, and `tpt-vectis` exist on GitHub (`tpt-solutions`). None is a runtime dependency now: Layer 4 is internal (`verify`, `anomaly`, `compile`), and `tpt-telos` was dropped.
 
 ## Phase 9: Gaussian Splat Improvements (`tpt-nova-splat`)
 
@@ -500,7 +500,7 @@ until Phase 10 Step 1 is being implemented (CLAUDE.md: no speculative crates).
 - [x] Define `Scene`, `Node`, and transform hierarchy (position/rotation/scale) — `tpt-nova-scene-graph` (`scene.rs`, `node.rs`, `transform.rs`); fixed `add_child` listing children as roots
 - [x] Implement `Camera` (`PerspectiveCamera`) and `Light` (`DirectionalLight`, `PointLight`, `AmbientLight`) node types, with active-camera selection
 - [x] Wire `Scene` to drive `tpt-nova-render`'s existing PBR and sprite pipelines — `bake(&scene)` → `RenderPlan`; `RenderPlan::spawn_into(&mut World)` writes `Transform`/`GlobalTransform`/`Mesh`/`Sprite`/`Light`/`Camera` (+ `MainCamera`) components that the pipelines and `pick_main_camera` read
-- [ ] Standalone example (via `tpt-nova-editor` or a simple window) proving the graph renders correctly — **headless example done** (`examples/scene_bake.rs` bakes and spawns, no GPU); the on-screen render check is not done
+- [x] Standalone example (via `tpt-nova-editor` or a simple window) proving the graph renders correctly — `examples/scene_window.rs` renders through the real `Renderer` on a local GPU. Checked on screen: the scene background is `#101820` and the lit cube sits where the camera transform puts it. This check found the scene background was dropped (not written to the renderer); fixed with a `ClearColor` component.
 
 ### Phase 2: "Stunning Defaults" & Post-Processing
 - [x] Implement the `PostProcessPipeline` orchestrator (toggleable effect stack) — scene-owned, serializable `PostProcessPipeline` lowers to `tpt-nova-render`'s `PostProcessChain`
@@ -509,18 +509,18 @@ until Phase 10 Step 1 is being implemented (CLAUDE.md: no speculative crates).
 - [ ] Tune default values for premium out-of-the-box visuals — defaults are set (bloom 0.8/0.6, ACES 1.0, FXAA on) but not yet tuned by eye against a rendered scene
 
 ### Phase 3: Appfront Bridge
-- [ ] Add the `appfront` feature flag to `tpt-nova-scene-graph` (opt-in; core engine must not depend on appfront)
-- [ ] Implement `AppfrontSceneDelegate` against the `SceneDelegate` trait from `tpt-appfront-canvas-3d`
-- [ ] Handle pointer-event raycasting (2D screen coords → 3D world coords)
-- [ ] Test embedding the scene in a `tpt-appfront` UI running in `tpt-shell` and as a Wasm PWA
+- [x] Add the `appfront` feature flag to `tpt-nova-scene-graph` (opt-in; core engine must not depend on appfront) — the optional dependency is a path to the local `tpt-appfront` checkout (branch `canvas-3d`). Switch it to a git dependency once that branch is pushed.
+- [x] Implement `AppfrontSceneDelegate` against the `SceneDelegate` trait from `tpt-appfront-canvas-3d` — `appfront.rs` (`AppfrontScene`). Picking works through `pick.rs`. `present` reports `Unsupported`, because there is no GPU readback into the appfront canvas. The trait lives in the local appfront branch `canvas-3d` (commit 8c8b007), not yet pushed.
+- [x] Handle pointer-event raycasting (2D screen coords → 3D world coords) — `pick.rs`: `screen_ray` unprojects a pixel and `pick` returns the nearest visible cube, handling rotation and scale. Covers the cube only.
+- [ ] Test embedding the scene in a `tpt-appfront` UI running in `tpt-shell` and as a Wasm PWA — not done. The bridge is tested headless (`Viewport3D` with picking). The appfront canvas has no GPU presentation, and the tpt-shell and PWA runs are not attempted.
 
 ### Phase 4: Polish & Ecosystem
-- [ ] Wasm/WebGPU compatibility for PWA deployments
-- [ ] Document the "How to embed 3D in your Rust UI" guide
+- [ ] Wasm/WebGPU compatibility for PWA deployments — compile-checked for `wasm32-unknown-unknown`: `tpt-nova-render` (a `MaybeSend` bound on `PostProcessPass`, since wgpu's WebGPU buffers are not `Send`), `tpt-nova-scene-graph`, and `tpt-nova-app` (a `.cargo/config.toml` sets the `getrandom` wasm backend). Not yet run in a browser.
+- [x] Document the "How to embed 3D in your Rust UI" guide — `docs/EMBED_3D.md` (scene, bake, window loop, picking). Does not cover the appfront bridge, which is blocked (see Phase 3).
 - [x] Verify `cargo-deny` compliance for all new dependencies — `cargo deny check licenses bans` passes (2026-11-21)
 
 ### Open questions (from spec3.txt)
-- [ ] **Raycasting:** include a lightweight AABB raycaster in the scene graph for UI interaction, with complex collision queries delegated to `tpt-nova-physics`? (spec3 recommends yes)
+- [x] **Raycasting:** decided and built — a lightweight AABB raycaster in the scene graph (`pick.rs`), following spec3's recommendation. Physics queries stay in `tpt-nova-physics`.
 - [ ] **Animator:** add a high-level `Animator` wrapper over `tpt-nova-anim` in Phase 4, or leave animation driven manually? (spec3 recommends the wrapper)
-- [ ] **External repo:** `tpt-appfront-canvas-3d` (and `tpt-appfront` / `tpt-shell`) live outside this repo. Confirm they exist and their `SceneDelegate` interface before Phase 3.
+- [x] **External repo:** answered — `tpt-appfront-canvas-3d` did not exist. It now exists on the local appfront branch `canvas-3d` (commit 8c8b007, dependency-free `SceneDelegate` and `Viewport3D`, 4 tests). Not pushed.
 - [ ] **Backing store:** should the scene graph optionally be ECS-backed for large scenes (spec3 §7), defaulting to an in-memory graph?
