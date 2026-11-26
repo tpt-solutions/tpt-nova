@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use glam::{Quat, Vec3};
 use tpt_appfront_canvas_3d::{PresentStatus, Viewport3D, ViewportSize};
+use tpt_appfront_core::ui_tree::UITree;
 use tpt_nova_scene_graph::appfront::AppfrontScene;
 use tpt_nova_scene_graph::{
     Color, DirectionalLight, Node, NodeId, PerspectiveCamera, Scene, Transform,
@@ -19,14 +20,36 @@ const WIDTH: u32 = 480;
 const HEIGHT: u32 = 360;
 
 // The page's script and CSS are separate assets: the shell's policy blocks inline code.
-const PAGE: &str = r#"<!doctype html>
+/// The UI, described as an appfront tree: a heading, the viewport the scene is drawn into,
+/// and a caption. appfront renders it to HTML, and the viewport becomes a canvas.
+fn ui() -> UITree<()> {
+    UITree::container(|c| {
+        c.heading(1, "tpt-nova scene");
+        c.viewport("scene", "A lit cube, turning");
+        c.text("Rendered on the GPU by tpt-nova and drawn into this page by tpt-shell.");
+    })
+}
+
+/// The page: appfront's HTML for the UI, inside a head that links the shell's own assets.
+/// The shell's policy blocks inline script and style, so the head only links them.
+fn page() -> String {
+    let body = tpt_appfront_html::render(&ui());
+    format!(
+        r#"<!doctype html>
+<html lang="en">
+<head>
 <meta charset="utf-8">
-<title>scene</title>
+<title>tpt-nova scene</title>
 <link rel="stylesheet" href="scene.css">
-<canvas id="view"></canvas>
-<div id="status">starting</div>
+</head>
+<body>
+{body}
 <script src="scene.js"></script>
-"#;
+</body>
+</html>
+"#
+    )
+}
 
 const STYLE: &str = r#"html, body { margin: 0; height: 100%; background: #101820; }
 canvas { display: block; width: 100vw; height: 100vh; image-rendering: pixelated; }
@@ -35,9 +58,13 @@ canvas { display: block; width: 100vw; height: 100vh; image-rendering: pixelated
 "#;
 
 const SCRIPT: &str = r#"(function () {
-  var canvas = document.getElementById('view');
+  // Frames carry no binding name, so they go to the page's first viewport canvas.
+  var canvas = document.querySelector('canvas[data-viewport]');
   var ctx = canvas.getContext('2d');
-  var status = document.getElementById('status');
+  var status = document.createElement('div');
+  status.id = 'status';
+  status.textContent = 'starting';
+  document.body.appendChild(status);
   var frames = 0;
   window.tpt.on('viewport.frame', function (frame) {
     try {
@@ -88,7 +115,7 @@ fn main() -> tpt_shell::Result<()> {
     let running = App::new()
         .name("scene-shell")
         .loader(loader)
-        .asset("index.html", "text/html", PAGE)
+        .asset("index.html", "text/html", page())
         .asset("scene.css", "text/css", STYLE)
         .asset("scene.js", "text/javascript", SCRIPT)
         .window(
