@@ -313,6 +313,32 @@ impl AnimationGraph {
         true
     }
 
+    /// The name of the state playback is currently in (the source state while
+    /// a transition is blending).
+    pub fn current_state(&self) -> &str {
+        &self.current
+    }
+
+    /// Whether a transition is in progress.
+    pub fn is_blending(&self) -> bool {
+        self.blending
+    }
+
+    /// Hard-cut to `state`, restarting its clock and cancelling any blend.
+    /// Returns false if no state with that name exists.
+    pub fn jump_to(&mut self, state: &str) -> bool {
+        if self.state(state).is_none() {
+            return false;
+        }
+        self.current = state.to_string();
+        self.current_time = 0.0;
+        self.blending = false;
+        self.blend = 0.0;
+        self.target = state.to_string();
+        self.target_time = 0.0;
+        true
+    }
+
     /// Advance both state clocks by `dt` seconds.
     pub fn update(&mut self, dt: f32) {
         if let Some(s) = self.state(&self.current) {
@@ -677,6 +703,36 @@ mod tests {
 
         // A transition that is already in progress cannot be re-triggered.
         assert!(!g.transition_to("idle"));
+    }
+
+    #[test]
+    fn jump_to_cuts_without_blending_and_rejects_unknown_states() {
+        let sk = two_bone_skeleton();
+        let a = translate_clip(0, Vec3::ZERO, Vec3::new(0.0, 2.0, 0.0), 1.0);
+        let b = translate_clip(0, Vec3::ZERO, Vec3::new(0.0, 4.0, 0.0), 1.0);
+        let mut g = AnimationGraph::new(sk, vec![a, b], "A");
+        g.add_state(AnimState {
+            name: "A".into(),
+            clip: 0,
+            speed: 1.0,
+            loop_: true,
+        });
+        g.add_state(AnimState {
+            name: "B".into(),
+            clip: 1,
+            speed: 1.0,
+            loop_: true,
+        });
+        g.update(0.5);
+        assert!(g.jump_to("B"));
+        assert_eq!(g.current_state(), "B");
+        assert!(!g.is_blending());
+        assert!(
+            g.pose()[0].translation.y.abs() < 1e-3,
+            "clock restarts at 0"
+        );
+        assert!(!g.jump_to("missing"));
+        assert_eq!(g.current_state(), "B");
     }
 
     #[test]

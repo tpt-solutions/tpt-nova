@@ -23,6 +23,7 @@
 //! assert!(plan.camera.is_some());
 //! ```
 
+pub mod animator;
 #[cfg(feature = "appfront")]
 pub mod appfront;
 pub mod bake;
