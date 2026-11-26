@@ -1094,6 +1094,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8cf8e6a8aa66ce33f63993ffc4ea4271eb5b0530a9002db8455ea6050c77bfa"
 
 [[package]]
+name = "proc-macro-crate"
+version = "3.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e67ba7e9b2b56446f1d419b1d807906278ffa1a658a8a5d8a39dcb1f5a78614f"
+dependencies = [
+ "toml_edit 0.25.21+spec-1.1.0",
+]
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1233,6 +1242,8 @@ version = "0.0.0"
 dependencies = [
  "glam",
  "tpt-appfront-canvas-3d",
+ "tpt-appfront-core",
+ "tpt-appfront-html",
  "tpt-nova-scene-graph",
  "tpt-shell",
 ]
@@ -1501,8 +1512,8 @@ checksum = "dc1beb996b9d83529a9e75c17a1686767d148d70663143c7854d8b4a09ced362"
 dependencies = [
  "serde",
  "serde_spanned",
- "toml_datetime",
- "toml_edit",
+ "toml_datetime 0.6.11",
+ "toml_edit 0.22.27",
 ]
 
 [[package]]
@@ -1515,6 +1526,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "toml_datetime"
+version = "1.1.3+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "173f25c883cd2176a2d8212155638c0a60d484a9d84546d270866f40f56b6e49"
+dependencies = [
+ "serde_core",
+]
+
+[[package]]
 name = "toml_edit"
 version = "0.22.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1523,9 +1543,30 @@ dependencies = [
  "indexmap",
  "serde",
  "serde_spanned",
- "toml_datetime",
+ "toml_datetime 0.6.11",
  "toml_write",
- "winnow",
+ "winnow 0.7.15",
+]
+
+[[package]]
+name = "toml_edit"
+version = "0.25.21+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "88497dab46de5bf343ec66b05c251e48c6213f3e9170c70a70a823f7abe886a4"
+dependencies = [
+ "indexmap",
+ "toml_datetime 1.1.3+spec-1.1.0",
+ "toml_parser",
+ "winnow 1.0.5",
+]
+
+[[package]]
+name = "toml_parser"
+version = "1.1.7+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0bb28d6e049a9766c3bd91a8326e6179f5b132dec87906bb97018ef7a2f3431a"
+dependencies = [
+ "winnow 1.0.5",
 ]
 
 [[package]]
@@ -1537,7 +1578,37 @@ checksum = "5d99f8c9a7727884afe522e9bd5edbfc91a3312b36a77b5fb8926e4c31a41801"
 [[package]]
 name = "tpt-appfront-canvas-3d"
 version = "0.1.1"
-source = "git+https://github.com/tpt-solutions/tpt-appfront#bf173d20205cb943863955744448cc76617d54b4"
+source = "git+https://github.com/tpt-solutions/tpt-appfront#dd8a61a057bf5d3eb26fcb21da54d45e1b647db0"
+
+[[package]]
+name = "tpt-appfront-core"
+version = "0.1.1"
+source = "git+https://github.com/tpt-solutions/tpt-appfront#dd8a61a057bf5d3eb26fcb21da54d45e1b647db0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tpt-appfront-macros",
+ "web-sys",
+]
+
+[[package]]
+name = "tpt-appfront-html"
+version = "0.1.1"
+source = "git+https://github.com/tpt-solutions/tpt-appfront#dd8a61a057bf5d3eb26fcb21da54d45e1b647db0"
+dependencies = [
+ "tpt-appfront-core",
+]
+
+[[package]]
+name = "tpt-appfront-macros"
+version = "0.1.1"
+source = "git+https://github.com/tpt-solutions/tpt-appfront#dd8a61a057bf5d3eb26fcb21da54d45e1b647db0"
+dependencies = [
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
 
 [[package]]
 name = "tpt-nova-anim"
@@ -2432,6 +2503,15 @@ name = "winnow"
 version = "0.7.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df79d97927682d2fd8adb29682d1140b343be4ac0f08fd68b7765d9c059d3945"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
+name = "winnow"
+version = "1.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8c3b93199df0ab874cdf0c6a94f0a0dc3423fe41f1cafb62b8bd7b1deb277aef"
 dependencies = [
  "memchr",
 ]
