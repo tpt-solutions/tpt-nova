@@ -3203,7 +3203,6 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 1.0.69",
- "tpt-nova-ecs",
 ]
 
 [[package]]

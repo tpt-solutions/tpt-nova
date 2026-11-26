@@ -10,8 +10,7 @@ keywords = ["rag", "vector-search", "embeddings", "retrieval", "ai"]
 categories = ["algorithms", "development-tools"]
 
 [dependencies]
-tpt-nova-ecs = { workspace = true }
-serde = { version = "1", features = ["derive"] }
+serde ={ version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "1"
 

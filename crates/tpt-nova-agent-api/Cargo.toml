@@ -13,7 +13,7 @@ categories = ["game-engines", "development-tools"]
 tpt-nova-ecs = { workspace = true }
 tpt-nova-telemetry = { workspace = true }
 tpt-nova-rag = { workspace = true, optional = true }
-tpt-nova-overlay = { path = "../tpt-nova-overlay" }
+tpt-nova-overlay = { path = "../tpt-nova-overlay", version = "0.1.0" }
 tpt-nova-splat = { workspace = true }
 glam = { version = "0.29", features = ["std"] }
 serde = { version = "1", features = ["derive"] }
