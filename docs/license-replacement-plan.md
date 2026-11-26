@@ -124,9 +124,31 @@ large; do not start that until it is needed.
    in parallel. Both are independent of windowing.
 4. `smartstring`: check `rhai` features, then decide (E).
 5. After each step, remove the matching exception from `deny.toml` and run
-   `cargo deny check licenses` (default features). `--all-features` still
-   fails on `tpt-nova-rag`'s `real-embeddings` feature, which pulls
-   Apache-only `tokenizers`. That feature needs its own decision.
+   `cargo deny check licenses` (default features).
+
+### F. Neural embeddings (`real-embeddings`, done)
+
+Status: **done.** `fastembed` (and with it `ort`, `ort-sys`, `tokenizers`,
+`hf-hub`, `ureq`, `ring`, `webpki-roots`, `esaxx-rs`, `spm_precompiled`) is
+gone. `RealEmbedder` calls a local embeddings server over plain `http://`
+(OpenAI-compatible `/v1/embeddings`) using `std::net` and `serde_json`, so it
+adds no crates.
+
+Why not an in-process ML runtime: every one that was checked pulls Apache-only
+crates. `candle-core` needs `safetensors` and `tokenizers`; `candle-transformers`
+adds `esaxx-rs` and `spm_precompiled`; `tract-onnx` needs `prost` 0.11 and
+`safetensors` 0.6. `tpt-crypto` was checked as a replacement for `ring`. It is
+not a drop-in: it has no rustls `CryptoProvider` and no RSA, and its README says
+it is unaudited. Nothing in the real-embeddings path needs TLS any more, so
+`ring` no longer needs a replacement.
+
+### G. HTTPS client (`llm` feature, open)
+
+`tpt-nova-agent-api`'s `llm` feature uses `reqwest`, which brings `openssl`
+(Apache-2.0 only, via `native-tls`), `sync_wrapper` (Apache-2.0 only) and `ryu`
+(Apache-2.0 OR BSL-1.0). `--all-features` fails on these three. Options: keep
+the cloud client behind a documented exception, or move the local-LLM path to
+plain HTTP like `RealEmbedder`, which covers local servers but not hosted APIs.
 
 ## Verification for each step
 

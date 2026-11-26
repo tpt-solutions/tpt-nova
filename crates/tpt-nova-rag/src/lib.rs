@@ -8,14 +8,15 @@
 //! [`FeatureHashEmbedder`] (feature-hashing bag-of-words) as the offline default
 //! so it works under CI, and a production deployment can drop in a real local
 //! neural embedder via the `real-embeddings` feature ([`RealEmbedder`], which
-//! runs All-MiniLM-L6-v2 inference locally with no API calls).
+//! calls a local embeddings server over plain HTTP, so no model runtime or TLS
+//! stack is linked into this crate).
 
 pub mod embed;
 pub mod index;
 
-#[cfg(feature = "real-embeddings")]
-pub use embed::RealEmbedder;
 pub use embed::{cosine_similarity, Embedder, FeatureHashEmbedder};
+#[cfg(feature = "real-embeddings")]
+pub use embed::{EmbedError, RealEmbedder};
 pub use index::{Document, Index, RagAgent, ScoredHit, SearchError};
 
 /// Convenience: build an [`Index`] from a directory of text-like files.

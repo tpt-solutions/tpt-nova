@@ -10,7 +10,7 @@ Part of [TPT Nova](../../README.md), the AI-native, ECS-based real-time engine.
 
 | Feature | Enables |
 |---------|---------|
-| `real-embeddings` | Swaps in a real sentence-embedding model (fastembed's local All-MiniLM-L6-v2) behind `RealEmbedder`. Enabling this downloads model weights on first use (network required once); inference itself is fully local with no API calls. |
+| `real-embeddings` | Adds `RealEmbedder`, which sends text to a local embeddings server (Ollama or `llama-server --embedding`) over plain `http://` using the OpenAI-compatible `/v1/embeddings` route. No model weights, inference runtime or TLS stack are linked into the crate. Only `http://` is accepted. |
 
 ## Workspace dependencies
 

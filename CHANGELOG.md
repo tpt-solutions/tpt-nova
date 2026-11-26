@@ -46,6 +46,10 @@ semantic versioning once it leaves Alpha.
   tpt-cadence crates.
 
 ### Changed
+- **RAG embeddings:** `tpt-nova-rag`'s `real-embeddings` feature no longer pulls in `fastembed`
+  and its ONNX runtime. `RealEmbedder` calls a local embeddings server (Ollama or
+  `llama-server --embedding`) over plain HTTP, so the feature adds no dependencies and the
+  Apache-2.0-only and CDLA license failures from that tree are gone.
 - **Windowing:** the editor and input use `tpt-window` instead of `winit`. The renderer creates
   its surface from `tpt-window` raw handles, and the app runs a caller-owned loop. `tpt-window`
   and `tpt-wasm` are git dependencies from `github.com/tpt-solutions`, allowed in `deny.toml`.

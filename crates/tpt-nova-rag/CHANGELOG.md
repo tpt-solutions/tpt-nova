@@ -8,9 +8,7 @@ All notable changes to this crate are recorded here. The format follows
 
 ### Changed
 - Renamed the package from `nova-rag` to `tpt-nova-rag` (workspace-wide `tpt-nova-` crate prefix).
-
-### Fixed
-- Pinned `ort-sys` to the exact `rc.4` release to match the `ort` that `fastembed` 3.14.1 pins. The caret range also accepted `ort-sys` rc.12, which broke the build. Dropped the `tls-rustls` feature that release no longer has, and updated `RealEmbedder` to `fastembed::Error`.
+- `real-embeddings` no longer uses `fastembed`. `RealEmbedder` now calls a local embeddings server over plain HTTP (`RealEmbedder::new(endpoint, model)`, OpenAI-compatible `/v1/embeddings`), with no dependencies added. This removes `fastembed`, `ort`, `ort-sys`, `tokenizers`, `hf-hub`, `ureq`, `ring` and `webpki-roots` from the feature's tree, which had been the source of the Apache-2.0-only and CDLA license failures. `RealEmbedder::new` no longer takes no arguments.
 
 ### Added
 - Per-crate `README.md`, `CHANGELOG.md`, `keywords`, and `categories` metadata.

@@ -62,8 +62,8 @@ When implementing a feature, find and tick the matching `todo.md` item.
 - `cargo run -p tpt-nova-ingest --example gen_sample_assets` — regenerates the only
   committed binary assets under `assets/` (`cube.glb`, `sample.splat`).
 - Linux builds need system libs (libx11/libxrandr/libxi/libxcursor/libxkbcommon/libwayland/libudev/libasound2 + pkg-config).
-- `tpt-nova-rag` defaults to `FeatureHashEmbedder`; the real local model is behind
-  the `real-embeddings` feature (off by default).
+- `tpt-nova-rag` defaults to `FeatureHashEmbedder`; `RealEmbedder` (the `real-embeddings`
+  feature, off by default) calls a local embeddings server over plain `http://`.
 
 ## Commit hygiene
 

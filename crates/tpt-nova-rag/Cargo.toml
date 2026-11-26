@@ -14,21 +14,10 @@ tpt-nova-ecs = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "1"
-# Optional real local embedding model (neural, runs inference locally after a
-# one-time model download). Not in the default feature set so the offline
-# FeatureHashEmbedder remains the CI/default path.
-fastembed = { version = "3", optional = true }
-# fastembed 3.14.1 pins ort "=2.0.0-rc.4", and ort rc.4 requires ort-sys
-# "^2.0.0-rc.4". That caret range also accepts rc.12, so an unpinned or rc.12
-# ort-sys gets unified into ort rc.4 and fails to compile (missing `size_t`,
-# `GetApi` fn-pointer API changes). Pin ort-sys to the exact rc.4 release so the
-# pair stays consistent. rc.4 has no `tls-rustls` feature; its download path uses
-# ureq's default TLS, so no extra feature is needed.
-ort-sys = { version = "=2.0.0-rc.4", optional = true }
 
 [features]
 default = []
-# Swaps in a real sentence-embedding model (fastembed's local All-MiniLM-L6-v2)
-# behind `RealEmbedder`. Enabling this downloads model weights on first use
-# (network required once); inference itself is fully local with no API calls.
-real-embeddings = ["dep:fastembed", "dep:ort-sys"]
+# Enables `RealEmbedder`, a neural embedder that calls a local embeddings
+# server (Ollama, llama.cpp `--embedding`) over plain HTTP. Adds no
+# dependencies: the client is std::net plus serde_json, which is already used.
+real-embeddings = []

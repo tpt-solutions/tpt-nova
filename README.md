@@ -42,6 +42,7 @@ Every crate is implemented. Each one has its own `README.md` and `CHANGELOG.md`.
 | `tpt-nova-scene-graph` | Declarative 3D scene graph baked into ECS components; `Animator`; picking; opt-in appfront bridge |
 | `tpt-nova-drivers` | Hot-swappable behaviour drivers with verified self-repair (Phase 8, partial) |
 | `tpt-nova-xtask` | Developer task runner (GPU/driver readiness check, scaffolding helpers) |
+| `tpt-nova-gameplay-example` | Example hot-reloadable gameplay module (player-controlled 2D entity) |
 
 ## Quick start
 
