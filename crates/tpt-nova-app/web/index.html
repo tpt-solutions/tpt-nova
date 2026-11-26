@@ -1,6 +1,10 @@
 <!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#101820">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
 <title>TPT Nova — web</title>
 <style>
   html, body { margin: 0; background: #111; color: #ddd; font: 14px system-ui, sans-serif; }
@@ -9,13 +13,22 @@
 <body>
 <div id="status">Loading TPT Nova…</div>
 <script type="module">
-  // Build the module first (see README), then serve this folder over HTTP.
-  // The generated files sit beside this page: tpt-nova-app.js and the .wasm.
+  // Build the module first (see README or scripts/build_web.sh), then serve this
+  // folder over HTTP. The generated files sit beside this page: tpt-nova-app.js
+  // and the .wasm. Service workers need a secure context: localhost or HTTPS.
   import init from './tpt-nova-app.js';
   const status = document.getElementById('status');
+
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js', { scope: './' })
+      .then(() => console.log('service worker registered'))
+      .catch((err) => console.error('service worker failed', err));
+  }
+
   try {
     await init();
-    status.textContent = 'Running. Check the console for errors.';
+    // The editor fills the page once it runs; hide the loading line.
+    status.hidden = true;
   } catch (err) {
     status.textContent = 'Failed to start: ' + err;
     console.error(err);
