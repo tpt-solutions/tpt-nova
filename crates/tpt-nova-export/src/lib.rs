@@ -318,6 +318,8 @@ pub fn entries_to_map(entries: &[PackEntry]) -> HashMap<String, Vec<u8>> {
         .collect()
 }
 
+pub mod driver_bundle;
+
 #[cfg(test)]
 mod tests {
     use super::*;
