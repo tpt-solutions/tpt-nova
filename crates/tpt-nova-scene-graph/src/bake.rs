@@ -163,6 +163,11 @@ impl RenderPlan {
             world.add_component(e, l.light);
             spawned.push(e);
         }
+        // The scene background travels as a `ClearColor` entity, which the
+        // renderer reads as the clear color.
+        // Not a scene node, so it is not part of the returned handles.
+        let bg = world.spawn();
+        world.add_component(bg, tpt_nova_render::ClearColor(self.background.to_array()));
         spawned
     }
 }
@@ -265,6 +270,19 @@ mod tests {
         let plan = bake(&scene);
         assert_eq!(plan.post.len(), 3);
         assert_eq!(plan.background, scene.background());
+    }
+
+    #[test]
+    fn spawn_carries_the_scene_background_as_clear_color() {
+        let mut scene = Scene::new().with_background(Color::hex("#101820"));
+        scene.add_node(Node::cube());
+        let plan = bake(&scene);
+        let mut world = World::new();
+        let spawned = plan.spawn_into(&mut world);
+        assert_eq!(spawned.len(), 1, "background is not a scene node");
+        let clear = world.query_1::<tpt_nova_render::ClearColor>();
+        assert_eq!(clear.len(), 1);
+        assert_eq!(clear[0].1 .0, scene.background().to_array());
     }
 
     #[test]

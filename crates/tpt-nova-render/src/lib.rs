@@ -17,6 +17,32 @@ use tpt_nova_ui::DrawList;
 use tpt_window::Window;
 use wgpu::util::DeviceExt;
 
+/// Background clear color in linear RGB. The renderer reads the first
+/// `ClearColor` in the world. Without one it uses the engine default.
+/// `tpt-nova-scene-graph` emits one from a scene's background.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ClearColor(pub [f32; 3]);
+
+impl tpt_nova_ecs::Component for ClearColor {}
+
+/// Engine default clear color (linear RGB), used when the world has no `ClearColor`.
+pub const DEFAULT_CLEAR: [f32; 3] = [0.05, 0.07, 0.1];
+
+/// The clear color for `world`: its `ClearColor` if present, else [`DEFAULT_CLEAR`].
+pub fn clear_color(world: &World) -> wgpu::Color {
+    let [r, g, b] = world
+        .query_1::<ClearColor>()
+        .first()
+        .map(|(_, c)| c.0)
+        .unwrap_or(DEFAULT_CLEAR);
+    wgpu::Color {
+        r: r as f64,
+        g: g as f64,
+        b: b as f64,
+        a: 1.0,
+    }
+}
+
 /// When the `neural` feature is on, `tpt-nova-render` can paint a live
 /// `tpt-nova-neural-materials` feed (a Video-LLM / webcam clip) onto an in-scene
 /// surface by uploading the bound feed's latest frame onto a GPU texture and
@@ -441,12 +467,7 @@ impl Renderer {
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.05,
-                            g: 0.07,
-                            b: 0.1,
-                            a: 1.0,
-                        }),
+                        load: wgpu::LoadOp::Clear(clear_color(world)),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -549,12 +570,7 @@ impl Renderer {
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: 0.05,
-                            g: 0.07,
-                            b: 0.1,
-                            a: 1.0,
-                        }),
+                        load: wgpu::LoadOp::Clear(clear_color(world)),
                         store: wgpu::StoreOp::Store,
                     },
                 })],

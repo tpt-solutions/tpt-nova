@@ -111,7 +111,18 @@ pub enum Effect {
 /// render passes into the supplied encoder. `input` is the previous pass's
 /// output; `output` is where the pass must write. The two views are always
 /// different textures.
-pub trait PostProcessPass: Send {
+/// `Send` on native targets. On wasm32 the WebGPU buffers wgpu holds are not
+/// `Send` (the browser is single-threaded), so the bound is dropped there.
+#[cfg(not(target_arch = "wasm32"))]
+pub trait MaybeSend: Send {}
+#[cfg(not(target_arch = "wasm32"))]
+impl<T: Send> MaybeSend for T {}
+#[cfg(target_arch = "wasm32")]
+pub trait MaybeSend {}
+#[cfg(target_arch = "wasm32")]
+impl<T> MaybeSend for T {}
+
+pub trait PostProcessPass: MaybeSend {
     fn label(&self) -> &'static str;
 
     /// Called when the chain's target size changes (and once when registered).

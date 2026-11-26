@@ -1,0 +1,3 @@
+# wasm32 builds: getrandom 0.3 (via ahash -> tobj -> tpt-nova-ingest) needs an explicit backend.
+[target.wasm32-unknown-unknown]
+rustflags = ["--cfg", 'getrandom_backend="wasm_js"']
