@@ -51,8 +51,9 @@ fn build_scene() -> Scene {
         SpriteNode::new(0, Vec2::splat(64.0)).with_z(1.0),
     ));
 
-    // `SCENE_DEFAULTS=1` keeps the stock post stack (bloom, ACES, FXAA) so its
-    // look can be judged on the GPU. Otherwise a harsher bloom is used.
+    // `SCENE_DEFAULTS=1` keeps the stock post stack (bloom 0.8/0.6, ACES, FXAA) so
+    // its look can be judged on the GPU. Otherwise FXAA is dropped and bloom is
+    // set to a higher threshold (0.9) and lower intensity (0.4), i.e. softer glow.
     if std::env::var("SCENE_DEFAULTS").is_err() {
         scene.disable_post_process(PostEffectKind::Fxaa);
         scene.enable_post_process(PostProcessEffect::Bloom {

@@ -50,10 +50,12 @@ pub fn clear_color(world: &World) -> wgpu::Color {
 #[cfg(feature = "neural")]
 use tpt_nova_neural_materials::{MaterialBindings, NeuralMaterialRegistry, NeuralTexture};
 
+pub mod offscreen;
 pub mod pbr;
 pub mod post;
 pub mod sprite;
 pub mod ui;
+pub use offscreen::{Frame, OffscreenRenderer, OFFSCREEN_FORMAT};
 pub use pbr::PbrRenderer;
 pub use post::{
     BloomSettings, Effect as PostEffect, PostProcessChain, PostProcessPass, ToneMapping,
@@ -137,8 +139,8 @@ pub struct Renderer {
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
     index_count: u32,
-    uniform_buffer: wgpu::Buffer,
-    bind_group: wgpu::BindGroup,
+    /// Layout for the per-draw uniform bind group (see `uniform_group`).
+    uniform_layout: wgpu::BindGroupLayout,
     depth_view: wgpu::TextureView,
     ui: UiOverlay,
     /// Declared last so it drops after `surface`, which refers to its raw handles.
@@ -211,13 +213,6 @@ impl Renderer {
             source: wgpu::ShaderSource::Wgsl(SHADER.into()),
         });
 
-        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("uniform-buffer"),
-            size: std::mem::size_of::<Uniforms>() as wgpu::BufferAddress,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("uniform-bgl"),
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -229,15 +224,6 @@ impl Renderer {
                     min_binding_size: None,
                 },
                 count: None,
-            }],
-        });
-
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("uniform-bg"),
-            layout: &bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: uniform_buffer.as_entire_binding(),
             }],
         });
 
@@ -397,8 +383,7 @@ impl Renderer {
             vertex_buffer,
             index_buffer,
             index_count: indices.len() as u32,
-            uniform_buffer,
-            bind_group,
+            uniform_layout: bind_group_layout,
             depth_view,
             ui,
         })
@@ -422,6 +407,27 @@ impl Renderer {
     /// Render one frame from ECS state.
     pub fn render(&mut self, world: &World) -> anyhow::Result<()> {
         self.render_with_ui(world, &DrawList::new())
+    }
+
+    /// A uniform buffer and bind group for one draw. Queue writes take effect at
+    /// submit, so one shared buffer would give every draw the last transform written
+    /// in the pass. A buffer per draw keeps each cube's own transform.
+    fn uniform_group(&self, uniforms: Uniforms) -> wgpu::BindGroup {
+        let buffer = self
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("uniform-draw"),
+                contents: bytemuck::cast_slice(&[uniforms]),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+        self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("uniform-draw-bg"),
+            layout: &self.uniform_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffer.as_entire_binding(),
+            }],
+        })
     }
 
     /// Render the 3D scene, then composite the given UI draw list on top as a 2D
@@ -485,7 +491,6 @@ impl Renderer {
             });
 
             pass.set_pipeline(&self.base_pipeline);
-            pass.set_bind_group(0, &self.bind_group, &[]);
             pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
 
@@ -497,8 +502,8 @@ impl Renderer {
                     view_proj: view_proj.to_cols_array_2d(),
                     model: gt.0.to_cols_array_2d(),
                 };
-                self.queue
-                    .write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+                let group = self.uniform_group(uniforms);
+                pass.set_bind_group(0, &group, &[]);
                 pass.draw_indexed(0..self.index_count, 0, 0..1);
             }
         }
@@ -611,20 +616,18 @@ impl Renderer {
                             log::warn!("neural upload failed: {err}");
                         }
                         pass.set_pipeline(&self.neural_pipeline);
-                        pass.set_bind_group(0, &self.bind_group, &[]);
                         pass.set_bind_group(1, bg, &[]);
                     }
                     None => {
                         pass.set_pipeline(&self.base_pipeline);
-                        pass.set_bind_group(0, &self.bind_group, &[]);
                     }
                 }
                 let uniforms = Uniforms {
                     view_proj: view_proj.to_cols_array_2d(),
                     model: gt.0.to_cols_array_2d(),
                 };
-                self.queue
-                    .write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+                let group = self.uniform_group(uniforms);
+                pass.set_bind_group(0, &group, &[]);
                 pass.draw_indexed(0..self.index_count, 0, 0..1);
             }
         }
