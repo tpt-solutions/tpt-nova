@@ -49,13 +49,6 @@ allow = [
 # this list short; every entry is a policy exception that needs a replacement
 # or a waiver. Grouped by the crate that pulls them in.
 exceptions = [
-    # Windowing: winit and its transitive deps (Linux decorations, DPI types).
-    { allow = ["Apache-2.0"], crate = "winit" },
-    { allow = ["Apache-2.0", "MIT"], crate = "dpi" },
-    { allow = ["Apache-2.0"], crate = "ab_glyph" },
-    { allow = ["Apache-2.0"], crate = "ab_glyph_rasterizer" },
-    { allow = ["Apache-2.0"], crate = "owned_ttf_parser" },
-    { allow = ["Apache-2.0"], crate = "gethostname" },
     # GPU stack: wgpu's shader compiler and GL loader.
     { allow = ["Apache-2.0"], crate = "codespan-reporting" },
     { allow = ["Apache-2.0"], crate = "spirv" },
