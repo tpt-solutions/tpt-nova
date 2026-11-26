@@ -11,6 +11,7 @@ keywords = ["ecs", "hot-reload", "game-engine", "drivers"]
 categories = ["game-engines"]
 
 [dependencies]
+libloading = { version = "0.8", optional = true }
 tpt-nova-ecs = { workspace = true }
 arc-swap = { workspace = true }
 thiserror = { workspace = true }
@@ -28,6 +29,8 @@ tpt-wasm-format = { git = "https://github.com/tpt-solutions/tpt-wasm", optional 
 
 [features]
 default = []
+# Native `.so`/`.dll` drivers via libloading (trusted, in-process; see native.rs).
+native-loader = ["dep:libloading"]
 wasm-sandbox = [
     "dep:tpt-wasm",
     "dep:tpt-wasm-runtime",

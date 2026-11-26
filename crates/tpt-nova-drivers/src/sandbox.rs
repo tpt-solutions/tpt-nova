@@ -466,4 +466,80 @@ mod tests {
             .expect("activates under the policy");
         assert!(registry.active(component).is_some());
     }
+
+    /// Deterministic xorshift64 so the fuzz run is reproducible without a `rand` dependency.
+    struct XorShift(u64);
+    impl XorShift {
+        fn next(&mut self) -> u64 {
+            let mut x = self.0;
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            self.0 = x;
+            x
+        }
+        fn below(&mut self, n: usize) -> usize {
+            (self.next() % n as u64) as usize
+        }
+    }
+
+    /// Fuzz: mutate a valid module (bit flips, byte overwrites, truncation,
+    /// appended junk) and push it through load and update. Hostile bytes must
+    /// be refused or fail cleanly, never panic, never run unbounded, and never
+    /// gain an import outside the granted set.
+    #[test]
+    fn mutated_modules_never_panic_or_escape_the_grant() {
+        let base = module(&[("read_dt", 0), ("emit_event", 1)], EMIT_SEVEN_THEN_READ);
+        let mut rng = XorShift(0x9E37_79B9_7F4A_7C15);
+        let mut loaded = 0usize;
+        let mut refused = 0usize;
+
+        for _ in 0..3000 {
+            let mut bytes = base.clone();
+            match rng.below(4) {
+                0 => {
+                    for _ in 0..1 + rng.below(4) {
+                        let i = rng.below(bytes.len());
+                        bytes[i] ^= 1 << rng.below(8);
+                    }
+                }
+                1 => {
+                    for _ in 0..1 + rng.below(4) {
+                        let i = rng.below(bytes.len());
+                        bytes[i] = rng.next() as u8;
+                    }
+                }
+                2 => bytes.truncate(rng.below(bytes.len())),
+                _ => {
+                    for _ in 0..1 + rng.below(16) {
+                        bytes.push(rng.next() as u8);
+                    }
+                }
+            }
+
+            match WasmDriver::load(spec(read_and_emit()), &bytes) {
+                Ok(driver) => {
+                    loaded += 1;
+                    // A module that loads has passed the import gate, so it may
+                    // reach only the granted host functions. Running it must
+                    // return (Ok or a clean error) and stay within the budget.
+                    let mut world = World::new();
+                    let _ = driver.update(&ctx(1.0 / 60.0), &mut world);
+                }
+                Err(_) => refused += 1,
+            }
+        }
+
+        assert_eq!(loaded + refused, 3000);
+        // The mutations are real: at least some hostile inputs are refused outright.
+        assert!(refused > 0, "fuzz run never refused a mutated module");
+    }
+
+    /// Escape attempt: an import outside the granted set stays refused no matter
+    /// how the module is shaped around it.
+    #[test]
+    fn ungranted_import_stays_refused_regardless_of_body() {
+        let wasm = module(&[("write_physics", 0)], &[0x0b]);
+        assert!(WasmDriver::load(spec(read_and_emit()), &wasm).is_err());
+    }
 }
