@@ -253,7 +253,7 @@ Capability map (`Capability` → registered function):
 ## Recipe: Ingest a custom mesh
 
 ### Goal
-Load a `.glb` / `.gltf` / `.obj`, auto-generate a V-HACD convex-decomposition
+Load a `.glb` / `.gltf` / `.obj`, auto-generate a convex-decomposition
 collider and a procedural rig, then spawn it in the world as a simulated body.
 
 ### Steps
@@ -261,7 +261,7 @@ collider and a procedural rig, then spawn it in the world as a simulated body.
    absolute path). Only `.glb`, `.gltf`, and `.obj` are supported
    (`IngestError::UnsupportedExtension` otherwise).
 2. Call `tpt_nova_ingest::ingest(&path)`. This runs the whole chain:
-   `load` → `decompose_meshes` (V-HACD) → `auto_rig` from combined bounds — and
+   `load` → `decompose_meshes` (convex decomposition) → `auto_rig` from combined bounds — and
    returns `IngestResult { meshes, convex_parts, skeleton, bounds }`.
 3. Spawn an entity with `Transform` + `RigidBody3D` + `Collider3D::from_parts`
    using `result.convex_parts`. Add a `PhysicsWorld3D` resource and step with

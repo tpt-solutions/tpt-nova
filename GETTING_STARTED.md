@@ -6,7 +6,7 @@ editor. It assumes a working Rust toolchain (stable, latest).
 ## 1. Prerequisites
 
 - **Rust** (stable, latest): install via [rustup](https://rustup.rs).
-- **Platform system libraries** (needed to build `winit`/`wgpu`):
+- **Platform system libraries** (needed to build `wgpu` and the `tpt-window` shell):
   - **Linux:** `libx11-dev libxrandr-dev libxi-dev libxcursor-dev
     libxkbcommon-dev libwayland-dev libudev-dev libasound2-dev pkg-config`
     (or the equivalent for your distro).
@@ -21,8 +21,8 @@ cd tpt-nova
 cargo build --workspace
 ```
 
-The first build pulls and compiles a few heavier dependencies (Rapier physics,
-`wgpu`). Subsequent builds are much faster.
+The first build pulls and compiles a few heavier dependencies (`wgpu` and the
+`tpt-window` shell, which are git dependencies). Subsequent builds are much faster.
 
 ## 3. Run the editor (see a window)
 
@@ -97,7 +97,7 @@ in the centre, and the inspector on the right.
 ## 4. Run the headless pipeline demo
 
 No GPU required for the end-to-end sample that exercises the *whole* pipeline
-(ECS + Rapier3D physics + scene save/load + agent control API + splat ingestion
+(ECS + in-house 3D physics + scene save/load + agent control API + splat ingestion
 + asset packaging):
 
 ```sh

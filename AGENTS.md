@@ -39,9 +39,9 @@ When implementing a feature, find and tick the matching `todo.md` item.
 - Strict ECS: prefer plain serializable/observable components over nested objects.
   The engine loop is deterministic (fixed-timestep, seeded RNG) and emits
   telemetry for an external AI agent to read and hot-apply. Keep state inspectable.
-- Rendering = `wgpu` (Vulkan/DX12/Metal/WebGPU). Physics = Rapier
-  (Rapier2D in `tpt-nova-physics`; Rapier3D for colliders in `tpt-nova-ingest`/`tpt-nova-splat`/`tpt-nova-videocap`).
-- Editor = egui/eframe inside `tpt-nova-app`'s winit+wgpu shell. Do not reintroduce Tauri/ImGui.
+- Rendering = `wgpu` (Vulkan/DX12/Metal/WebGPU). Physics = in-house solvers, no Rapier
+  (2D in `tpt-nova-physics`; 3D for colliders in `tpt-nova-ingest`/`tpt-nova-splat`/`tpt-nova-videocap`).
+- Editor = bespoke `tpt-nova-ui` immediate-mode stack hosted in `tpt-nova-app`'s `tpt-window`+wgpu shell. No egui/eframe. Do not reintroduce Tauri/ImGui/egui.
 - Two scripting tiers: hot-reloadable Rust dylibs (`tpt-nova-scripting`) for shipped code;
   sandboxed Rhai (`tpt-nova-scripting-embedded`) for AI logic. Rhai `eval`/`import` are disabled and
   capabilities are enforced by only registering granted functions.

@@ -9,33 +9,39 @@ physics-driven, game-ready runtimes.
 - Getting started (clone → build → run a window): [GETTING_STARTED.md](GETTING_STARTED.md)
 - Contributing / CI gates: [CONTRIBUTING.md](CONTRIBUTING.md)
 - Alpha release gate: [docs/ALPHA_CHECKLIST.md](docs/ALPHA_CHECKLIST.md)
-- Changelog: [CHANGELOG.md](CHANGELOG.md)
+- Changelog: [CHANGELOG.md](CHANGELOG.md) (workspace-wide; each crate also has its own `CHANGELOG.md`)
 
 ## Workspace crates
+
+Every crate is implemented. Each one has its own `README.md` and `CHANGELOG.md`.
 
 | Crate | Role |
 |-------|------|
 | `tpt-nova-ecs` | Entity/component storage, scene graph, scheduler, deterministic RNG |
-| `tpt-nova-render` | wgpu renderer (cube, PBR, sprite pipelines) |
-| `tpt-nova-input` | Keyboard/mouse → ECS input + action mapping |
-| `tpt-nova-physics` | Rapier2D integration + sync step |
-| `tpt-nova-ingest` | glTF/OBJ loading, VHACD decompose, auto-rig, Rapier3D colliders |
+| `tpt-nova-render` | wgpu renderer (cube, PBR, sprite pipelines), post-processing, offscreen rendering |
+| `tpt-nova-input` | Keyboard/mouse → ECS input + action mapping (on `tpt-window` events) |
+| `tpt-nova-physics` | In-house 2D rigid-body solver + deterministic sync step |
+| `tpt-nova-ingest` | glTF/OBJ loading, convex decomposition, hulls, auto-rig, in-house 3D collider solver |
 | `tpt-nova-scene` | Versioned scene (de)serialization (RON/JSON) + migrations |
-| `tpt-nova-audio` | 2D/3D spatial audio |
+| `tpt-nova-audio` | 2D/3D spatial audio (WAV, FLAC, Ogg, MP3) |
 | `tpt-nova-scripting` | Rust-native hot-reload gameplay |
 | `tpt-nova-scripting-embedded` | Rhai sandboxed scripting |
 | `tpt-nova-ui` | Immediate-mode in-game + world-space UI |
-| `tpt-nova-editor` | egui/eframe scene editor (hierarchy, inspector, gizmos, Vibe GUI) |
-| `tpt-nova-anim` | Skeletal animation + blending |
+| `tpt-nova-editor` | Bespoke immediate-mode scene editor (hierarchy, inspector, gizmos, Vibe GUI) on `tpt-nova-ui` |
+| `tpt-nova-anim` | Skeletal animation + blending + state machine |
 | `tpt-nova-telemetry` | JSON/MessagePack telemetry + AI control loop |
 | `tpt-nova-neural-materials` | Live video-LLM texture feeds |
-| `tpt-nova-splat` | Gaussian Splat loading + convex-hull collision proxy |
+| `tpt-nova-splat` | Gaussian Splat loading, editing, LOD, multi-part collision proxies, depth-sorted renderer |
 | `tpt-nova-rag` | Local vector DB + RAG retrieval over project assets/docs |
-| `tpt-nova-export` | Standalone packaging + `.novapack` asset bundling |
+| `tpt-nova-export` | Standalone packaging, `.novapack` asset bundling, content-addressed driver bundles |
 | `tpt-nova-agent-api` | Stable, versioned external-AI-agent control API |
 | `tpt-nova-overlay` | "Highlight & Fix" region selection → AI fix prompt |
 | `tpt-nova-videocap` | Depth + segmentation mask → collision proxies |
 | `tpt-nova-sample-game` | End-to-end sample wiring the full pipeline |
+| `tpt-nova-app` | Runtime shell: `tpt-window` + wgpu loop, live editor host, browser/PWA build |
+| `tpt-nova-scene-graph` | Declarative 3D scene graph baked into ECS components; `Animator`; picking; opt-in appfront bridge |
+| `tpt-nova-drivers` | Hot-swappable behaviour drivers with verified self-repair (Phase 8, partial) |
+| `tpt-nova-xtask` | Developer task runner (GPU/driver readiness check, scaffolding helpers) |
 
 ## Quick start
 
@@ -63,6 +69,10 @@ end-to-end demo wiring `tpt-nova-rag` (context retrieval), `tpt-nova-agent-api`
 `tpt-nova-sample-game` also works as a forkable project template: it wires the
 full physics/scene/agent/splat/export pipeline together and is a reasonable
 starting point for a new game built on the engine, not just a smoke test.
+
+The same app builds for the browser (WebGPU) and installs as a PWA. Run
+`scripts/build_web.sh`, then serve `crates/tpt-nova-app/web`. Steps are in
+[crates/tpt-nova-app/README.md](crates/tpt-nova-app/README.md).
 
 ## License
 

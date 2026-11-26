@@ -11,14 +11,44 @@ semantic versioning once it leaves Alpha.
   shared uniform buffer inside the draw loop. All queued writes take effect at submit, so
   every cube in a frame drew with the last transform. Each draw now has its own uniform
   buffer and bind group (`tpt-nova-render`).
+- **Scene background dropped:** the renderer now honours the scene background through a
+  `ClearColor` component, falling back to the engine default (`tpt-nova-render`).
+- **Deterministic entity order:** `World::entities()` returned hash order, which changes per
+  process. It is now sorted by index, so a tick visits entities the same way every run
+  (`tpt-nova-ecs`).
+- **`getrandom` on wasm32:** uses the `wasm_js` backend (`tpt-nova-app`).
 
 ### Added
 - **Offscreen rendering:** `tpt_nova_render::OffscreenRenderer` renders the cube pass into an
   RGBA8 texture and reads it back, with no window. `AppfrontScene::present` uses it, so the
   appfront bridge now produces frames (`last_frame()`) instead of always reporting
   unsupported.
+- **`tpt-nova-scene-graph`** (new crate): a declarative `Scene` / `Node` graph that bakes into
+  ECS components for the PBR and sprite pipelines, a post-process description lowered to
+  `tpt-nova-render`'s `PostProcessChain`, screen-ray picking, an `Animator` over
+  `tpt-nova-anim`, and an opt-in `appfront` bridge.
+- **`tpt-nova-drivers`** (new crate, Phase 8): hot-swappable behaviour drivers with an
+  `arc-swap` versioned registry, a WASM sandbox (`wasm-sandbox`), trusted native drivers
+  (`native-loader`), shadow comparison, an internal exact verifier, anomaly detection, and a
+  verified self-repair loop. The strict registry admits a driver only with a `Verified` proof.
+- **Browser build and PWA:** `tpt-nova-app` builds for `wasm32` (async renderer, rAF-driven
+  loop) and ships an installable PWA (manifest, icons, cache-first service worker) through
+  `scripts/build_web.sh`.
+- **Post-processing and PBR seam:** `tpt-nova-render` gains a post-processing chain (bloom,
+  tone mapping) and a `PbrScene` extraction step, so PBR frames can be checked headlessly.
+- **Splat editing and rendering:** `tpt-nova-splat` gains in-place editing, spatial chunking
+  and LOD, spherical-harmonic colour, `.compressed.ply` loading, multi-part collision
+  proxies, and a depth-sorted renderer. The app spawns a demo splat cloud, and Highlight & Fix
+  includes the selected splat ranges in its prompt. The agent API exposes splat commands.
+- **Driver bundles:** `tpt-nova-export` stores drivers content-addressed under
+  `drivers/<sha256>/` and refuses an artifact that does not match its address.
+- **WAV and FLAC decoding:** `tpt-nova-audio` decodes WAV in-house and FLAC through the pinned
+  tpt-cadence crates.
 
 ### Changed
+- **Windowing:** the editor and input use `tpt-window` instead of `winit`. The renderer creates
+  its surface from `tpt-window` raw handles, and the app runs a caller-owned loop. `tpt-window`
+  and `tpt-wasm` are git dependencies from `github.com/tpt-solutions`, allowed in `deny.toml`.
 - **Crate prefix:** every workspace crate is now `tpt-nova-*` (package names,
   directories under `crates/`, and Rust import paths `tpt_nova_*`). Example:
   `nova-ecs` is now `tpt-nova-ecs`. The `nova-control.json` and
@@ -45,8 +75,9 @@ semantic versioning once it leaves Alpha.
   - `tpt-nova-ingest::decompose_convex` takes `DecompositionParams` (was
     `VHACDParameters`). `tpt-nova-audio::Sound::decode` returns `Decoded`.
   - Still Apache-2.0-only via the platform stack, listed as exceptions in
-    `deny.toml`: `winit`, `cpal`, and the wgpu/naga helpers. `smartstring` (MPL-2.0,
-    via `rhai`) is also an exception.
+    `deny.toml`: `cpal` (audio output), and the wgpu/naga helpers. `smartstring` (MPL-2.0,
+    via `rhai`) is also an exception. The `winit` and its windowing exceptions were
+    removed once the windowing shell moved to `tpt-window`.
 - **`deny.toml`** at the workspace root enforces the license allow-list
   (MIT, BSD, ISC, Zlib, 0BSD, Unicode, CC0, Unlicense). Apache-2.0 is not
   allowed on its own, so Apache-only crates fail unless they have an exception.
