@@ -23,10 +23,13 @@
 //! assert!(plan.camera.is_some());
 //! ```
 
+#[cfg(feature = "appfront")]
+pub mod appfront;
 pub mod bake;
 pub mod color;
 pub mod id;
 pub mod node;
+pub mod pick;
 pub mod post;
 pub mod scene;
 pub mod transform;
@@ -38,6 +41,7 @@ pub use node::{
     AmbientLight, DirectionalLight, LightSource, MeshNode, Node, NodeKind, PerspectiveCamera,
     PointLight, SpriteNode,
 };
+pub use pick::{pick, screen_ray, Aabb, Pick, Ray};
 pub use post::{PostEffectKind, PostProcessEffect, PostProcessPipeline, ToneCurve};
 pub use scene::{Scene, SceneError};
 pub use transform::{rotation_looking_at, Transform};

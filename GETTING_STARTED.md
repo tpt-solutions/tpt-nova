@@ -75,6 +75,17 @@ The editor is fully wired to the renderer: every panel is a `tpt-nova-ui`
 `DrawList` composited over the 3D scene by `tpt-nova-render`'s `UiOverlay` pass, so
 what you see is the real, interactive engine — not a mock-up.
 
+### Scene-graph window (a captured frame)
+
+The declarative scene graph renders through the same GPU path. The window below
+is `tpt-nova-scene-graph`'s `scene_window` example, captured on a local GPU:
+
+```sh
+cargo run -p tpt-nova-scene-graph --example scene_window --release
+```
+
+![A lit cube on the scene background, rendered by tpt-nova-scene-graph](docs/images/scene_window.png)
+
 ## 4. Run the headless pipeline demo
 
 No GPU required for the end-to-end sample that exercises the *whole* pipeline
